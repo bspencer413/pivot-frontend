@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0d9488">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="pivot.watch">
+  <title>pivot.watch</title>
+  <meta name="description" content="pivot.watch — Watch for the next career move. Saved searches by company, sector, level, and location. Alerts when a matching job posts.">
+  <meta name="keywords" content="pivot.watch, job alerts, career change, job watchlist, saved job search">
+  <meta name="robots" content="index, follow">
+  <meta name="author" content="pivot.watch">
+  <link rel="canonical" href="https://pivot.watch">
+  <meta property="og:title" content="pivot.watch — Watch for your next move">
+  <meta property="og:description" content="Save a search by company, sector, level, and location. Get alerted when a matching job posts.">
+  <meta property="og:url" content="https://pivot.watch">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="pivot.watch — Watch for your next move">
+  <meta name="twitter:description" content="Saved job searches with alerts when a matching role posts.">
+  <link rel="manifest" href="data:application/json;base64,eyJuYW1lIjogInBpdm90LndhdGNoIiwgInNob3J0X25hbWUiOiAicGl2b3QiLCAic3RhcnRfdXJsIjogIi8iLCAiZGlzcGxheSI6ICJzdGFuZGFsb25lIiwgImJhY2tncm91bmRfY29sb3IiOiAiIzBhMGEwYSIsICJ0aGVtZV9jb2xvciI6ICIjMGQ5NDg4In0=">
+  <link rel="apple-touch-icon" href="/pivot_icon.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; font-family: Georgia, 'Times New Roman', serif; }
+    html, body { height: 100%; overflow-x: hidden; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .tap-pulse { animation: pulse 1.8s ease-in-out infinite; }
+    .modal-drawer {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+      background: #0f172a; border-radius: 20px 20px 0 0;
+      border-top: 1px solid #1e3a4a;
+      max-height: 85vh; overflow-y: auto;
+      transform: translateY(0);
+      transition: transform 0.3s ease;
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    }
+    .modal-overlay { position: fixed; inset: 0; z-index: 99; background: rgba(0,0,0,0.6); }
+  </style>
+</head>
+<body style="margin:0;padding:0;">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const API_BASE = 'https://pivot-watch-backend.onrender.com';
+const PV_BG = '/pivot-bg.jpg';
+const PV_LOGIN_BG = '/pivot-bg.jpg';
+const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
+const APP_VERSION = '0.1.0';
+
+// Sector dropdown master list — matches the most-used 12 of Adzuna's 28 categories.
+// Backend stores the slug; UI shows the label.
+const SECTORS = [
+  { slug: 'it',            label: 'IT' },
+  { slug: 'engineering',   label: 'Engineering' },
+  { slug: 'legal',         label: 'Legal' },
+  { slug: 'healthcare',    label: 'Healthcare' },
+  { slug: 'finance',       label: 'Finance & Accounting' },
+  { slug: 'sales',         label: 'Sales' },
+  { slug: 'marketing',     label: 'Marketing & PR' },
+  { slug: 'hr',            label: 'HR & Recruitment' },
+  { slug: 'education',     label: 'Education' },
+  { slug: 'government',    label: 'Government' },
+  { slug: 'construction',  label: 'Trades & Construction' },
+  { slug: 'other',         label: 'Other' },
+];
+
+const LEVELS = [
+  { slug: 'entry',     label: 'Entry' },
+  { slug: 'mid',       label: 'Mid' },
+  { slug: 'senior',    label: 'Senior' },
+  { slug: 'executive', label: 'Executive' },
+];
+
+const RADIUS_VALUES = ['5', '10', '25', '50', 'remote'];
+
+// ── pivot.watch helpers ───────────────────────────────────────────────────────
+
+const toTitleCase = (str) => {
+  if (!str) return '';
+  return str.toLowerCase().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+};
+
+const smartTitleCase = (str) => {
+  if (!str) return '';
+  return toTitleCase(str.trim());
+};
+
+// Level slug → human label. Backend stores the slug; UI displays the label.
+const levelLabel = (slug) => {
+  const found = LEVELS.find(l => l.slug === slug);
+  return found ? found.label : '';
+};
+
+// Sector slug → human label.
+const sectorLabel = (slug) => {
+  const found = SECTORS.find(s => s.slug === slug);
+  return found ? found.label : (slug || '');
+};
+
+// Radius value → human label. Used in cards and the drawer header.
+const radiusLabel = (v) => {
+  if (v === 'remote') return 'Remote';
+  if (!v) return '';
+  return v + ' mi';
+};
+
+// Salary band → compact display ("$80k–$120k" or "$80k+" or "").
+const formatSalary = (min, max, currency) => {
+  if (min == null && max == null) return '';
+  const cur = currency || 'USD';
+  const sym = cur === 'USD' ? '$' : (cur + ' ');
+  const k = (n) => n >= 1000 ? Math.round(n / 1000) + 'k' : String(Math.round(n));
+  if (min != null && max != null) return sym + k(min) + '–' + sym + k(max);
+  if (min != null) return sym + k(min) + '+';
+  return 'up to ' + sym + k(max);
+};
+
+// ISO timestamp → "3d ago" / "5h ago" / "just now"
+const formatRelativeTime = (iso) => {
+  if (!iso) return '';
+  const then = new Date(iso.replace(' ', 'T') + (iso.endsWith('Z') ? '' : 'Z'));
+  if (isNaN(then.getTime())) return '';
+  const diff = Math.max(0, (Date.now() - then.getTime()) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
+  if (diff < 86400 * 30) return Math.round(diff / 86400) + 'd ago';
+  return then.toISOString().slice(0, 10);
+};
+
+const formatDistance = (mi) => {
+  if (mi == null) return '';
+  if (mi < 1) return '< 1 mi';
+  if (mi < 10) return mi.toFixed(1) + ' mi';
+  return Math.round(mi) + ' mi';
+};
+
+const RADIUS_PRESETS = ['5', '10', '25', '50'];
+
+// ── Icon components (kept) ────────────────────────────────────────────────────
+
+const SearchIcon = () => (
+  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+);
+
+const HeartIcon = () => (
+  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>
+);
+
+const InfoIcon = () => (
+  <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+);
+
+const BellIcon = ({ red }) => (
+  <svg className={'w-7 h-7 ' + (red ? 'tap-pulse' : '')} fill={red ? '#dc2626' : 'none'} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+);
+
+const PlusIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+);
+
+const TrashIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+);
+
+const EditIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+);
+
+const CheckIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+);
+
+const EyeIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+);
+
+const EyeOffIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
+);
+
+const ClearableInput = ({ value, onChange, onBlur, onKeyPress, placeholder, type='text', maxLength, inputClass, numeric }) => (
+  <div className="relative">
+    <input type={type} value={value} onChange={onChange} onBlur={onBlur} onKeyPress={onKeyPress} placeholder={placeholder} maxLength={maxLength} inputMode={numeric ? 'decimal' : undefined} className={inputClass + ' pr-10'} autoCorrect="off" autoCapitalize={numeric ? 'off' : undefined} spellCheck="false" />
+    {value && (
+      <button onClick={() => onChange({ target: { value: '' } })} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-200 hover:text-white text-xl font-bold leading-none" type="button">X</button>
+    )}
+  </div>
+);
+
+const CardPageHeader = ({ title, subtitle }) => (
+  <div className="mb-3 pb-2 border-b border-slate-700/30 text-center">
+    <h2 className="text-4xl font-black text-white tracking-wide">{title}</h2>
+    {subtitle && <p className="text-teal-300 italic text-xl mt-1">{subtitle}</p>}
+  </div>
+);
+
+const POSTER_STYLE = {
+  backgroundColor: '#0a0a0a',
+  backgroundImage: 'url(' + PV_BG + ')',
+  backgroundSize: 'cover',
+  backgroundPosition: 'center top',
+  backgroundRepeat: 'no-repeat',
+  backgroundAttachment: 'scroll',
+};
+
+const WOOD_STYLE = {
+  backgroundColor: '#0a0a0a',
+  backgroundImage: 'url(' + PV_BG + ')',
+  backgroundSize: 'cover',
+  backgroundPosition: 'center top',
+  backgroundRepeat: 'no-repeat',
+  backgroundAttachment: 'scroll',
+  filter: 'none',
+};
+
+const PageWrapper = ({ children, bgStyle }) => {
+  var bg = bgStyle || POSTER_STYLE;
+  var isListPage = bg === WOOD_STYLE;
+  return (
+    <div style={{ minHeight: '100dvh', width: '100%', position: 'relative', paddingTop: 'env(safe-area-inset-top)', paddingBottom: '5rem', backgroundColor: bg.backgroundColor, backgroundImage: bg.backgroundImage || 'none', backgroundSize: bg.backgroundSize || 'auto', backgroundPosition: bg.backgroundPosition || 'top', backgroundRepeat: bg.backgroundRepeat || 'no-repeat', backgroundAttachment: bg.backgroundAttachment || 'scroll' }}>
+      {isListPage && <div style={{ position: 'fixed', inset: 0, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', backgroundColor: 'rgba(10,10,10,0.55)', zIndex: 0 }} />}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: isListPage ? 'transparent' : 'rgba(10,10,10,0.30)' }} />
+      <div style={{ position: 'relative', zIndex: 10 }}>{children}</div>
+    </div>
+  );
+};
+function App() {
+  const [page, setPage] = useState('login');
+  const [auth, setAuth] = useState(false);
+  const [user, setUser] = useState(null);
+  const [searches, setSearches] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [expandedAlertGroups, setExpandedAlertGroups] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [backendWaking, setBackendWaking] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [newSearch, setNewSearch] = useState({
+    name: '',
+    company: '',
+    sector: '',
+    level: '',
+    location_name: '',
+    lat: '',
+    lng: '',
+    radius_value: '25',
+  });
+  const [geoQuery, setGeoQuery] = useState('');
+  const [geoCandidates, setGeoCandidates] = useState([]);
+  const [geoPicked, setGeoPicked] = useState(null);
+  const [geoSearching, setGeoSearching] = useState(false);
+  const [geoMsg, setGeoMsg] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editingName, setEditingName] = useState('');
+  const [showDangerZone, setShowDangerZone] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [drawerData, setDrawerData] = useState(null);
+  const [drawerLoading, setDrawerLoading] = useState(false);
+  const [mapEnlarged, setMapEnlarged] = useState(false);
+  const [apiVersion, setApiVersion] = useState('...');
+  const [addSearchMsg, setAddSearchMsg] = useState('');
+
+  // Viewport sizing
+  const [viewportW, setViewportW] = useState(typeof window !== 'undefined' ? window.innerWidth : 400);
+  useEffect(() => {
+    const onResize = () => setViewportW(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const isPhone = viewportW < 640;
+  const isTablet = viewportW >= 640 && viewportW < 1024;
+
+  useEffect(() => {
+    fetch(API_BASE + '/health').then(r => r.json()).then(d => setApiVersion(d.version || '?')).catch(() => setApiVersion('?'));
+    const t = localStorage.getItem('pv_token');
+    const u = localStorage.getItem('pv_user');
+    if (t && u) {
+      try { setUser(JSON.parse(u)); setAuth(true); setPage('search'); loadSearches(); loadNotifications(); }
+      catch(e) { localStorage.removeItem('pv_token'); localStorage.removeItem('pv_user'); }
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setTimeout(() => { document.querySelectorAll('input').forEach(i => i.blur()); }, 100);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  const loadSearches = async () => {
+    try {
+      const token = localStorage.getItem('pv_token');
+      const r = await fetch(API_BASE + '/pv/searches', { headers: { 'Authorization': 'Bearer ' + token } });
+      if (!r.ok) throw new Error('Failed');
+      setSearches(await r.json());
+    } catch (e) { console.error(e); }
+  };
+
+  const loadNotifications = async () => {
+    try {
+      const token = localStorage.getItem('pv_token');
+      const r = await fetch(API_BASE + '/notifications', { headers: { 'Authorization': 'Bearer ' + token } });
+      if (!r.ok) throw new Error('Failed');
+      setNotifications(await r.json());
+    } catch (e) { console.error(e); }
+  };
+
+  const dismissAlert = async (notifId) => {
+    const token = localStorage.getItem('pv_token');
+    setNotifications(prev => prev.filter(n => n.id !== notifId));
+    try { await fetch(API_BASE + '/notifications/' + notifId, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } }); } catch(e) {}
+  };
+
+  const doAuth = async (mode) => {
+    if (!email || !password) return;
+    setLoading(true);
+    setBackendWaking(false);
+    const wakingTimer = setTimeout(() => setBackendWaking(true), 3500);
+    try {
+      const r = await fetch(API_BASE + '/auth/' + mode, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, password: password })
+      });
+      clearTimeout(wakingTimer);
+      setBackendWaking(false);
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert(err.detail || 'Authentication failed');
+        setLoading(false);
+        return;
+      }
+      const data = await r.json();
+      localStorage.setItem('pv_token', data.access_token);
+      const u = { email: email };
+      localStorage.setItem('pv_user', JSON.stringify(u));
+      setUser(u); setAuth(true); setPage('search');
+      await loadSearches();
+      await loadNotifications();
+    } catch (e) {
+      clearTimeout(wakingTimer);
+      setBackendWaking(false);
+      alert('Network error: ' + e.message);
+    }
+    setLoading(false);
+  };
+
+  const doLogout = () => {
+    localStorage.removeItem('pv_token');
+    localStorage.removeItem('pv_user');
+    setUser(null); setAuth(false); setSearches([]); setNotifications([]);
+    setPage('login');
+  };
+
+  const doDeleteAccount = async () => {
+    const token = localStorage.getItem('pv_token');
+    try {
+      await fetch(API_BASE + '/account', { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+    } catch(e) {}
+    doLogout();
+  };
+
+  const doGeocode = async () => {
+    setGeoMsg('');
+    setGeoCandidates([]);
+    setGeoPicked(null);
+    var q = (geoQuery || '').trim();
+    if (q.length < 2) { setGeoMsg('Type a city, address, or landmark.'); return; }
+    setGeoSearching(true);
+    try {
+      var token = localStorage.getItem('pv_token');
+      var r = await fetch(API_BASE + '/pv/geocode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ query: q })
+      });
+      if (!r.ok) {
+        var err = await r.json().catch(function(){ return {}; });
+        setGeoMsg(err.detail || 'Search failed. Try a different query.');
+        setGeoSearching(false);
+        return;
+      }
+      var data = await r.json();
+      var cands = data.candidates || [];
+      setGeoCandidates(cands);
+      if (cands.length === 0) setGeoMsg('No matches. Try a more specific query.');
+    } catch (e) {
+      setGeoMsg('Network error: ' + e.message);
+    }
+    setGeoSearching(false);
+  };
+
+  const addSearch = async () => {
+    setAddSearchMsg('');
+    var name = (newSearch.name || '').trim();
+    var radius_value = newSearch.radius_value || '25';
+    if (RADIUS_VALUES.indexOf(radius_value) === -1) radius_value = '25';
+    var company = (newSearch.company || '').trim() || null;
+    var sector  = newSearch.sector || null;
+    var level   = newSearch.level || null;
+    // Location: required unless radius is 'remote'.
+    var lat = null, lng = null, location_name = null;
+    if (radius_value !== 'remote') {
+      if (geoPicked) {
+        lat = geoPicked.lat;
+        lng = geoPicked.lng;
+        location_name = geoPicked.formatted_address;
+      } else if (newSearch.lat && newSearch.lng) {
+        lat = parseFloat(newSearch.lat);
+        lng = parseFloat(newSearch.lng);
+        location_name = newSearch.location_name || null;
+      }
+      if (lat == null || lng == null || isNaN(lat) || isNaN(lng)) {
+        setAddSearchMsg('Pick a location or use My Location, or set radius to Remote.');
+        return;
+      }
+    }
+    if (!name) {
+      // Auto-name from the most distinctive filter.
+      if (company) name = company;
+      else if (sector) name = sectorLabel(sector);
+      else if (level) name = levelLabel(level) + ' level';
+      else if (location_name) name = location_name.split(',')[0].trim();
+      else name = (radius_value === 'remote') ? 'Remote' : 'My search';
+    }
+    var token = localStorage.getItem('pv_token');
+    try {
+      var r = await fetch(API_BASE + '/pv/searches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({
+          name: name,
+          company: company,
+          sector: sector,
+          level: level,
+          location_name: location_name,
+          lat: lat,
+          lng: lng,
+          radius_value: radius_value,
+          alert_level: 'realtime',
+        })
+      });
+      if (!r.ok) {
+        var err = await r.json().catch(function(){ return {}; });
+        setAddSearchMsg((err.detail && typeof err.detail === 'string') ? err.detail : 'Failed to add search.');
+        return;
+      }
+      setNewSearch({ name: '', company: '', sector: '', level: '', location_name: '', lat: '', lng: '', radius_value: '25' });
+      setGeoQuery('');
+      setGeoCandidates([]);
+      setGeoPicked(null);
+      setAddSearchMsg('Added "' + name + '" to your watchlist.');
+      await loadSearches();
+      setTimeout(function(){ setAddSearchMsg(''); setPage('watchlist'); }, 900);
+    } catch (e) {
+      setAddSearchMsg('Network error: ' + e.message);
+    }
+  };
+
+  // ── Geolocation: "Use My Location" button. Triggers the browser's iOS/Android
+  // permission prompt (Once / While Using App / Don't Allow). On success we
+  // reverse-geocode the coords via /pv/geocode to get a human-readable label.
+  const useMyLocation = async () => {
+    setAddSearchMsg('');
+    if (!navigator.geolocation) {
+      setAddSearchMsg("Your browser doesn't support location lookup.");
+      return;
+    }
+    setAddSearchMsg('Getting your location…');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        // Try reverse-geocode for a friendly label. If it fails we still keep the coords.
+        var label = Number(lat).toFixed(3) + ', ' + Number(lng).toFixed(3);
+        try {
+          var token = localStorage.getItem('pv_token');
+          var r = await fetch(API_BASE + '/pv/geocode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ query: lat.toFixed(5) + ', ' + lng.toFixed(5) })
+          });
+          if (r.ok) {
+            var data = await r.json();
+            if (data.candidates && data.candidates.length > 0) {
+              label = data.candidates[0].formatted_address;
+            }
+          }
+        } catch(e) { /* fall through with raw coords */ }
+        setGeoPicked({ formatted_address: label, lat: lat, lng: lng, place_id: 'geo_' + Date.now() });
+        setGeoQuery(label);
+        setAddSearchMsg('');
+      },
+      (err) => {
+        if (err.code === 1) setAddSearchMsg('Location permission denied. Type a location instead.');
+        else if (err.code === 3) setAddSearchMsg('Location lookup timed out. Try again or type one.');
+        else setAddSearchMsg('Location lookup failed. Type a location instead.');
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+    );
+  };
+
+  const setSearchInMySearches = async (id, saved) => {
+    // v0.1.6: toggles the in_my_searches flag. Never removes the place from
+    // Watchlist — Watchlist contains ALL searches and is the live monitor.
+    var token = localStorage.getItem('pv_token');
+    try {
+      var r = await fetch(API_BASE + '/pv/searches/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ in_my_searches: saved })
+      });
+      if (r.ok) {
+        setSearches(function(prev) {
+          return prev.map(function(p) {
+            if (p.id === id) return Object.assign({}, p, { in_my_searches: saved });
+            return p;
+          });
+        });
+      }
+    } catch(e) { console.error('save to my searches failed:', e); }
+  };
+
+  const renameSearch = async (id, name) => {
+    var token = localStorage.getItem('pv_token');
+    try {
+      var r = await fetch(API_BASE + '/pv/searches/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ name: name })
+      });
+      if (r.ok) {
+        setSearches(function(prev) {
+          return prev.map(function(p) {
+            if (p.id === id) return Object.assign({}, p, { name: name });
+            return p;
+          });
+        });
+      }
+    } catch(e) { console.error('rename failed:', e); }
+  };
+
+  const removeSearch = async (id) => {
+    var token = localStorage.getItem('pv_token');
+    try {
+      var r = await fetch(API_BASE + '/pv/searches/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+      if (r.ok) {
+        setSearches(function(prev) { return prev.filter(function(p) { return p.id !== id; }); });
+      }
+    } catch(e) { console.error('delete failed:', e); }
+  };
+
+  const openSearchDrawer = async (search) => {
+    setDrawerData({ search: search, jobs: [], count: 0 });
+    setDrawerLoading(true);
+    const token = localStorage.getItem('pv_token');
+    try {
+      const r = await fetch(API_BASE + '/pv/searches/' + search.id + '/jobs', { headers: { 'Authorization': 'Bearer ' + token } });
+      if (r.ok) {
+        const data = await r.json();
+        setDrawerData(data);
+      }
+    } catch(e) { console.error(e); }
+    setDrawerLoading(false);
+  };
+
+  const JobsDrawer = () => {
+    if (!drawerData) return null;
+    const search = drawerData.search || {};
+    const jobs = drawerData.jobs || [];
+    // Subtitle: location + radius for radius searches; "Remote" for remote-only.
+    const subtitle = (search.radius_value === 'remote')
+      ? 'Remote'
+      : ((search.location_name || '') + ' · ' + radiusLabel(search.radius_value));
+    // Filter summary chips for the header card.
+    const filterChips = [];
+    if (search.company) filterChips.push(search.company);
+    if (search.sector)  filterChips.push(sectorLabel(search.sector));
+    if (search.level)   filterChips.push(levelLabel(search.level));
+    return (
+      <div>
+        <div className="modal-overlay" onClick={() => setDrawerData(null)} />
+        <div className="modal-drawer">
+          <div className="px-4 pt-4 pb-2 border-b border-slate-700/40 flex items-start justify-between">
+            <div className="flex-1 min-w-0 pr-2">
+              <h2 className="text-2xl font-bold text-white truncate">{search.name}</h2>
+              <p className="text-teal-300 text-base">{subtitle}</p>
+              {filterChips.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {filterChips.map((c, i) => (
+                    <span key={i} className="text-xs bg-teal-900/60 border border-teal-700/50 text-teal-200 px-2 py-0.5 rounded-full">{c}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button onClick={() => setDrawerData(null)} className="text-gray-200 hover:text-white text-2xl font-bold">X</button>
+          </div>
+          <div className="px-4 py-3">
+            {drawerLoading && <p className="text-teal-200 text-center py-6 animate-pulse text-xl">Loading matching jobs...</p>}
+            {!drawerLoading && drawerData && drawerData.static_map_url && (
+              <button onClick={() => setMapEnlarged(true)} className="block w-full mb-3 rounded-xl overflow-hidden border border-slate-700/50">
+                <img src={drawerData.static_map_url} alt="" style={{ width: '100%', display: 'block' }} loading="lazy" />
+                <span className="block text-center text-teal-300 text-sm py-1 bg-slate-900/70">Tap to enlarge</span>
+              </button>
+            )}
+            {!drawerLoading && jobs.length === 0 && (
+              <div className="py-6 text-center">
+                <p className="text-3xl mb-2">💼</p>
+                <p className="text-white text-2xl font-bold mb-1">No matching jobs yet</p>
+                <p className="text-gray-100 text-lg">Watching for new postings.</p>
+              </div>
+            )}
+            {!drawerLoading && jobs.length > 0 && (
+              <div className="space-y-3">
+                {jobs.map(j => (
+                  <div key={j.id} className="rounded-xl overflow-hidden border border-teal-700/40 bg-slate-800/50">
+                    <div className="px-3 py-2 flex items-center gap-2 bg-teal-900/40">
+                      <span className="text-2xl">💼</span>
+                      <span className="text-white font-bold text-base truncate flex-1">{j.company || 'Unknown employer'}</span>
+                      <span className="text-white/70 text-xs uppercase">{j.source}</span>
+                    </div>
+                    <div className="px-3 py-2">
+                      <p className="text-white text-lg font-semibold leading-snug">{j.title || 'Position'}</p>
+                      <div className="flex flex-wrap gap-2 mt-1 text-sm">
+                        {j.level && <span className="text-teal-300">{levelLabel(j.level)}</span>}
+                        {j.sector && <span className="text-teal-300">· {sectorLabel(j.sector)}</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-2 text-base text-gray-100">
+                        {j.is_remote && <span className="text-teal-200">🌐 Remote</span>}
+                        {!j.is_remote && j.location_name && <span>📍 {j.location_name}</span>}
+                        {j.distance_mi != null && <span className="text-gray-300">({formatDistance(j.distance_mi)})</span>}
+                        {j.posted_at && <span>🕒 {formatRelativeTime(j.posted_at)}</span>}
+                      </div>
+                      {(j.salary_min != null || j.salary_max != null) && (
+                        <p className="text-teal-200 text-base mt-1">💰 {formatSalary(j.salary_min, j.salary_max, j.salary_currency)}</p>
+                      )}
+                      {j.url && (
+                        <a href={j.url} target="_blank" rel="noopener noreferrer" className="text-teal-300 underline text-base mt-2 inline-block">View posting →</a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="px-4 pb-4">
+            {search.id && !search.in_my_searches && (() => {
+              // Dup-check: same name (case-insensitive) already saved in My Searches?
+              var dup = searches.some(function(s) {
+                return s.in_my_searches && s.id !== search.id && s.name && search.name &&
+                       s.name.toLowerCase().trim() === search.name.toLowerCase().trim();
+              });
+              if (dup) {
+                return (
+                  <div className="w-full py-3 bg-slate-800/40 border border-slate-600/40 text-gray-100 rounded-xl text-lg text-center mb-2">
+                    Already in My Searches (same name)
+                  </div>
+                );
+              }
+              return (
+                <button onClick={async () => { await setSearchInMySearches(search.id, true); setDrawerData(Object.assign({}, drawerData, { search: Object.assign({}, search, { in_my_searches: true }) })); }} className="w-full py-3 bg-teal-700 hover:bg-teal-800 border border-teal-500 text-white rounded-xl text-xl font-semibold mb-2">
+                  Save to My Searches
+                </button>
+              );
+            })()}
+            {search.id && search.in_my_searches && (
+              <div className="w-full py-3 bg-slate-800/40 border border-slate-600/40 text-gray-100 rounded-xl text-lg text-center mb-2">
+                Saved to My Searches
+              </div>
+            )}
+            <p className="text-center text-gray-100 text-base mt-2">
+              Sources: USAJobs · Adzuna · Greenhouse
+            </p>
+            <button onClick={() => setDrawerData(null)} className="w-full py-4 bg-gray-800/60 border border-gray-700 text-white rounded-xl text-xl mt-2">Close</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const PT = isPhone ? '41vh' : isTablet ? '36vh' : '34vh';
+  const cardClass = 'rounded-2xl p-4 shadow-2xl border border-teal-700/40 bg-gray-900/80 backdrop-blur-sm';
+  const iClass = 'w-full px-4 py-3 rounded-xl bg-white/10 border border-teal-700/40 text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-teal-400 text-xl';
+  const containerClass = (page === 'info') ? 'w-full max-w-3xl mx-auto px-3' : 'w-full px-3';
+  const unreadCount = notifications.length;
+
+  // ── Login page ──────────────────────────────────────────────────────────────
+
+  if (page === 'login') {
+    return (
+      <div style={{ minHeight: '100dvh', width: '100%', backgroundColor: POSTER_STYLE.backgroundColor, backgroundImage: 'url(' + PV_LOGIN_BG + ')', backgroundSize: POSTER_STYLE.backgroundSize, backgroundPosition: POSTER_STYLE.backgroundPosition, backgroundRepeat: POSTER_STYLE.backgroundRepeat, backgroundAttachment: POSTER_STYLE.backgroundAttachment, display: 'flex', flexDirection: 'column', alignItems: 'stretch', paddingBottom: '4rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', flex: '1 1 auto', minHeight: '50vh', paddingTop: '2rem', paddingBottom: '1.5rem' }}>
+          <h1 className="text-teal-300 font-black text-center tracking-tight" style={{ fontSize: isPhone ? '6rem' : '7rem', textShadow: '0 2px 14px rgba(0,0,0,0.95), 0 0 28px rgba(0,0,0,0.85)', marginTop: '1rem', lineHeight: '1' }}>pivot.<br />watch</h1>
+        </div>
+        <div style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem', paddingBottom: '2rem' }}>
+          <div className="rounded-2xl p-4 shadow-2xl border border-teal-400/50 space-y-3" style={{ backgroundColor: 'rgba(28,25,23,0.85)', backdropFilter: 'blur(8px)' }}>
+            <input id="ew-login-email" type="email" name="ew-login-email" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} onFocus={(e) => { setTimeout(() => { e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 350); }} onKeyPress={(e) => e.key === 'Enter' && doAuth('login')} autoComplete="email" autoCorrect="off" autoCapitalize="off" spellCheck="false" className="w-full px-4 py-3 rounded-xl bg-white/15 border border-white/30 text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-teal-400 text-xl" />
+            <div className="relative">
+              <input id="ew-login-password" type={showPassword ? 'text' : 'password'} name="ew-login-password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} onFocus={(e) => { setTimeout(() => { e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 350); }} onKeyPress={(e) => e.key === 'Enter' && doAuth('login')} autoComplete="current-password" autoCorrect="off" autoCapitalize="off" spellCheck="false" className="w-full px-4 py-3 rounded-xl bg-white/15 border border-white/30 text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-teal-400 text-xl" />
+              <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/60">{showPassword ? <EyeOffIcon /> : <EyeIcon />}</button>
+            </div>
+            {backendWaking && <p className="text-white/60 text-xl text-center animate-pulse">Waking up the server...</p>}
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => doAuth('login')} disabled={loading} className="py-4 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl disabled:opacity-50 text-2xl">{loading ? '...' : 'Sign In'}</button>
+              <button onClick={() => doAuth('register')} disabled={loading} className="py-4 bg-slate-700/60 hover:bg-slate-800/80 text-white font-bold rounded-xl disabled:opacity-50 text-2xl border border-teal-400/60">{loading ? '...' : 'Register'}</button>
+            </div>
+            <p className="text-white/50 text-base text-center">You'll stay signed in automatically</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // v0.1.6 model:
+  //   - Watchlist = ALL searches (cron monitors them all, drawer does live recheck)
+  //   - My Searches = subset with in_my_searches=true (additional saved-for-reference flag)
+  //   - A search lives in BOTH simultaneously when saved to My Searches.
+  //   - is_archived is legacy and ignored at the UI level (backend migrated it).
+  var activeSearches = searches;
+  var archivedSearches = searches.filter(function(p) { return p.in_my_searches; });
+
+  return (
+    <PageWrapper bgStyle={page === 'watchlist' || page === 'searches' || page === 'alerts' ? WOOD_STYLE : POSTER_STYLE}>
+      <JobsDrawer />
+      {mapEnlarged && drawerData && drawerData.static_map_url && (
+        <div onClick={() => setMapEnlarged(false)} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ position: 'relative', width: '100%', maxWidth: '900px' }}>
+            <button onClick={() => setMapEnlarged(false)} style={{ position: 'absolute', top: '-2.5rem', right: '0.25rem', color: 'white', fontSize: '1.5rem', fontWeight: 'bold' }}>X</button>
+            <img src={drawerData.static_map_url} alt="" style={{ width: '100%', display: 'block', borderRadius: '12px', border: '1px solid #1e3a4a' }} />
+            <p style={{ color: '#94a3b8', textAlign: 'center', marginTop: '0.5rem', fontSize: '0.95rem' }}>Tap anywhere to close</p>
+          </div>
+        </div>
+      )}
+      <div className={containerClass}>
+
+        {/* ── Search / Add Search ─────────────────────────────────────────── */}
+        {page === 'search' && (() => {
+          var SEARCH_PT = isPhone ? '38vh' : isTablet ? '36vh' : '34vh';
+          var isRemote = newSearch.radius_value === 'remote';
+          return (
+          <div className="space-y-3" style={{ paddingTop: SEARCH_PT, paddingBottom: '6rem' }}>
+            <div className="flex flex-col items-center justify-end" style={{ minHeight: SEARCH_PT, marginTop: '-' + SEARCH_PT, paddingTop: '0.5rem', paddingBottom: '0.75rem', pointerEvents: 'none', overflow: 'visible' }}>
+              <p className="text-teal-300 font-bold italic text-center" style={{ fontSize: isPhone ? '2.5rem' : '3rem', textShadow: '0 2px 10px rgba(0,0,0,0.95), 0 0 20px rgba(0,0,0,0.8)', marginTop: '0.25rem', lineHeight: '1.05' }}>Watch<br />Your Next</p>
+            </div>
+            <div className={cardClass} style={{ overflowY: 'auto', maxHeight: 'calc(100dvh - ' + SEARCH_PT + ' - 7rem)', backgroundColor: 'rgba(15,23,42,0.85)' }}>
+              <CardPageHeader title="Add a Search" subtitle="Watch for your next move" />
+              <div className="space-y-3">
+
+                {/* Search name (optional — auto-named from filters if blank) */}
+                <div>
+                  <label className="text-teal-200 text-sm">Name (optional)</label>
+                  <ClearableInput value={newSearch.name} onChange={(e) => setNewSearch(Object.assign({}, newSearch, { name: e.target.value }))} placeholder='e.g. "Senior IT, Honolulu"' inputClass={iClass} />
+                </div>
+
+                {/* Company — free-text, optional */}
+                <div>
+                  <label className="text-teal-200 text-sm">Company</label>
+                  <ClearableInput value={newSearch.company} onChange={(e) => setNewSearch(Object.assign({}, newSearch, { company: e.target.value }))} placeholder="Any company (or type a name)" inputClass={iClass} />
+                </div>
+
+                {/* Sector dropdown */}
+                <div>
+                  <label className="text-teal-200 text-sm">Sector</label>
+                  <select value={newSearch.sector} onChange={(e) => setNewSearch(Object.assign({}, newSearch, { sector: e.target.value }))} className={iClass + ' appearance-none'}>
+                    <option value="">Any sector</option>
+                    {SECTORS.map(s => <option key={s.slug} value={s.slug}>{s.label}</option>)}
+                  </select>
+                </div>
+
+                {/* Level dropdown */}
+                <div>
+                  <label className="text-teal-200 text-sm">Level</label>
+                  <select value={newSearch.level} onChange={(e) => setNewSearch(Object.assign({}, newSearch, { level: e.target.value }))} className={iClass + ' appearance-none'}>
+                    <option value="">Any level</option>
+                    {LEVELS.map(l => <option key={l.slug} value={l.slug}>{l.label}</option>)}
+                  </select>
+                </div>
+
+                {/* Radius — single dropdown with Remote as a value */}
+                <div>
+                  <label className="text-teal-200 text-sm">Radius</label>
+                  <div className="grid grid-cols-5 gap-2">
+                    {RADIUS_VALUES.map(r => (
+                      <button
+                        key={r}
+                        onClick={() => setNewSearch(Object.assign({}, newSearch, { radius_value: r }))}
+                        className={'py-3 rounded-lg text-base font-bold border ' + (newSearch.radius_value === r ? 'bg-teal-600 text-white border-teal-400' : 'bg-slate-800/60 text-teal-200 border-slate-700/40')}
+                      >
+                        {r === 'remote' ? 'Remote' : (r + ' mi')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Location section: hidden when radius=Remote */}
+                {!isRemote && (
+                  <div className="space-y-2 pt-2 border-t border-slate-700/40">
+                    <label className="text-teal-200 text-sm">Location (within {newSearch.radius_value} mi)</label>
+                    <input
+                      type="text"
+                      value={geoQuery}
+                      onChange={(e) => { setGeoQuery(e.target.value); setGeoPicked(null); }}
+                      onKeyPress={(e) => e.key === 'Enter' && doGeocode()}
+                      placeholder="City, ZIP, or address"
+                      autoComplete="address-level2 postal-code"
+                      autoCorrect="off"
+                      autoCapitalize="words"
+                      spellCheck="false"
+                      className={iClass}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={doGeocode} disabled={geoSearching} className="py-3 bg-teal-700 hover:bg-teal-800 disabled:opacity-60 text-white rounded-lg text-base font-bold">
+                        {geoSearching ? 'Searching…' : 'Find Location'}
+                      </button>
+                      <button onClick={useMyLocation} className="py-3 bg-slate-700 hover:bg-slate-600 text-teal-200 rounded-lg text-base font-bold flex items-center justify-center gap-1">
+                        📍 Use My Location
+                      </button>
+                    </div>
+                    {geoMsg && <p className="text-teal-300 text-center text-base">{geoMsg}</p>}
+                    {geoCandidates.length > 0 && (
+                      <div className="space-y-2 mt-1">
+                        <p className="text-teal-200 text-base text-center">Pick the best match:</p>
+                        {geoCandidates.map(function(c, i) {
+                          var picked = geoPicked && geoPicked.place_id === c.place_id;
+                          return (
+                            <button key={c.place_id || i} onClick={function(){ setGeoPicked(c); }} className={'w-full text-left p-3 rounded-lg border ' + (picked ? 'bg-teal-700 border-teal-400 text-white' : 'bg-slate-800/60 border-slate-700/40 text-teal-100 hover:border-teal-600')}>
+                              <span className="text-lg">{c.formatted_address}</span>
+                              <span className="block text-xs opacity-70 mt-1">{Number(c.lat).toFixed(3)}, {Number(c.lng).toFixed(3)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {geoPicked && (
+                      <p className="text-teal-300 text-center text-base">📍 {geoPicked.formatted_address}</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Add button — always shown */}
+                <button onClick={addSearch} className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg flex items-center justify-center gap-2 text-2xl font-bold mt-2">
+                  <PlusIcon /> Add to Watchlist
+                </button>
+
+                {addSearchMsg && <p className="text-teal-300 text-center text-xl">{addSearchMsg}</p>}
+                <p className="text-gray-100 text-base text-center leading-snug px-2 pt-2 border-t border-slate-700/30">
+                  Sources: USAJobs (federal) · Adzuna (private boards) · Greenhouse (per-employer)
+                </p>
+              </div>
+            </div>
+          </div>
+          );
+        })()}
+
+        {/* ── Watchlist ──────────────────────────────────────────────────── */}
+        {page === 'watchlist' && (
+          <div className="space-y-3" style={{ paddingTop: activeSearches.length > 0 ? '1rem' : PT }}>
+            <div className={cardClass}>
+              <CardPageHeader title="Watchlist" subtitle="Tap a search to see matching jobs" />
+              {activeSearches.length === 0 && (
+                <div className="py-6 text-center">
+                  <p className="text-gray-100 text-xl leading-relaxed mb-2">No searches yet.</p>
+                  <p className="text-teal-300 text-xl font-medium">Use Search to add one.</p>
+                </div>
+              )}
+            </div>
+            {activeSearches.length > 0 && (
+              <div className={cardClass + ' mt-3'}>
+                <h2 className="text-3xl font-bold mb-1 text-white text-center">Your Watchlist ({activeSearches.length})</h2>
+                <div className="space-y-2 mt-2">
+                  {activeSearches.map(p => (
+                    <div key={p.id} className="p-4 rounded-lg border bg-gray-800/50 border-slate-700/30">
+                      {editingId === p.id ? (
+                        <div className="space-y-2">
+                          <ClearableInput value={editingName} onChange={(e) => setEditingName(e.target.value)} placeholder="Search name" inputClass="w-full px-3 py-4 border border-teal-700 rounded-lg focus:ring-2 focus:ring-teal-400 text-2xl bg-gray-700 text-white placeholder-gray-400" />
+                          <div className="flex gap-2">
+                            <button onClick={async () => { await renameSearch(p.id, smartTitleCase(editingName)); setEditingId(null); setEditingName(''); }} className="flex-1 py-4 bg-teal-600 text-white rounded-lg text-2xl font-bold">Save</button>
+                            <button onClick={() => { setEditingId(null); setEditingName(''); }} className="flex-1 py-4 bg-gray-600 text-gray-200 rounded-lg text-2xl">Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 min-w-0">
+                            <button onClick={() => openSearchDrawer(p)} className="text-left w-full">
+                              <h3 className="font-semibold text-2xl text-white hover:text-teal-300 underline decoration-dotted truncate">{p.name}</h3>
+                            </button>
+                            <p className="text-xl text-gray-200">{p.radius_value === 'remote' ? 'Remote' : ((p.location_name || (Number(p.lat).toFixed(2) + ', ' + Number(p.lng).toFixed(2))) + ' · ' + radiusLabel(p.radius_value))}</p>
+                            <div className="flex items-center gap-1 mt-1"><CheckIcon /><span className="text-xl text-teal-400">Watching for new jobs</span></div>
+                          </div>
+                          <div className="flex gap-2 ml-2 shrink-0">
+                            <button onClick={() => { setEditingId(p.id); setEditingName(p.name); }} className="p-2 text-teal-400 hover:bg-slate-700/30 rounded-lg"><EditIcon /></button>
+                            <button onClick={() => removeSearch(p.id)} className="p-2 text-teal-400 hover:bg-slate-700/30 rounded-lg"><TrashIcon /></button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── My Searches (saved) ───────────────────────────────────────── */}
+        {page === 'searches' && (
+          <div className="space-y-3" style={{ paddingTop: '1rem' }}>
+            <div className={cardClass}>
+              <CardPageHeader title="My Searches" subtitle="Your saved collection — also being watched" />
+              {archivedSearches.length === 0 ? (
+                <div className="text-center py-6">
+                  <p className="text-gray-100 text-xl leading-relaxed">Saved searches appear here for quick reference.</p>
+                  <p className="text-gray-200 text-base mt-2">They also stay on your Watchlist for monitoring. Tap "Save to My Searches" inside any search drawer.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {archivedSearches.map(p => (
+                    <div key={p.id} className="p-4 bg-gray-900/70 rounded-lg border border-gray-600/50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <button onClick={() => openSearchDrawer(p)} className="text-left w-full">
+                            <h3 className="font-semibold text-2xl text-white underline decoration-dotted truncate">{p.name}</h3>
+                          </button>
+                          <span className="text-xl text-gray-200 font-bold">Saved</span>
+                          <p className="text-gray-300 text-lg">{p.radius_value === 'remote' ? 'Remote' : ((p.location_name || (Number(p.lat).toFixed(2) + ', ' + Number(p.lng).toFixed(2))) + ' · ' + radiusLabel(p.radius_value))}</p>
+                        </div>
+                        <button onClick={() => removeSearch(p.id)} className="p-2 text-teal-400 hover:bg-slate-700/30 rounded-lg ml-2 shrink-0"><TrashIcon /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Alerts feed ───────────────────────────────────────────────── */}
+        {page === 'alerts' && (
+          <div className="space-y-3" style={{ paddingTop: '1rem' }}>
+            <div className={cardClass}>
+              <CardPageHeader title="Alerts" subtitle="Latest jobs matching your searches" />
+              {notifications.length === 0 ? (
+                <div className="text-center py-4">
+                  <p className="text-white font-bold text-2xl">No alerts yet</p>
+                  <p className="text-gray-200 text-xl mt-1">We'll notify you when a matching job posts.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {(() => {
+                    var groups = {};
+                    var order = [];
+                    for (var ni = 0; ni < notifications.length; ni++) {
+                      var n = notifications[ni];
+                      var key = n.watchlist_id || ('name:' + n.name);
+                      if (!groups[key]) { groups[key] = { name: n.name, watchlist_id: n.watchlist_id, items: [], latest: n.created_at }; order.push(key); }
+                      groups[key].items.push(n);
+                      if (n.created_at > groups[key].latest) groups[key].latest = n.created_at;
+                    }
+                    return order.map(function(k) {
+                      var g = groups[k];
+                      var firstId = g.items[0].id;
+                      var isExpanded = !!expandedAlertGroups[k];
+                      var visibleItems = isExpanded ? g.items : g.items.slice(0, 1);
+                      var moreCount = g.items.length - 1;
+                      return (
+                        <div key={k} className="p-3 bg-slate-900/50 border border-slate-800 rounded-xl">
+                          <h3 className="font-bold text-white text-2xl mb-1">{g.name || 'Search'}</h3>
+                          <ul className="mb-2 space-y-1">
+                            {visibleItems.map(function(item) {
+                              return <li key={item.id} className="text-gray-200 text-base leading-snug">• {item.message}</li>;
+                            })}
+                          </ul>
+                          {moreCount > 0 && (
+                            <button onClick={() => setExpandedAlertGroups(Object.assign({}, expandedAlertGroups, { [k]: !isExpanded }))} className="text-teal-300 text-base font-semibold underline decoration-dotted mb-2">
+                              {isExpanded ? 'Show less' : ('+ ' + moreCount + ' more ' + (moreCount === 1 ? 'alert' : 'alerts'))}
+                            </button>
+                          )}
+                          <p className="text-gray-200 text-sm mt-1 mb-2">{new Date(g.latest).toLocaleDateString()}</p>
+                          <div className="flex gap-2">
+                            <button onClick={() => {
+                              var watchedSearch = searches.find(function(p) { return p.id === g.watchlist_id; });
+                              if (watchedSearch) openSearchDrawer(watchedSearch);
+                            }} className="flex-1 py-2 bg-teal-700/50 border border-teal-600/50 text-white rounded-lg text-xl font-bold">View</button>
+                            <button onClick={async () => {
+                              for (var di = 0; di < g.items.length; di++) { try { await dismissAlert(g.items[di].id); } catch(e) {} }
+                            }} className="flex-1 py-2 bg-transparent border border-slate-700/50 text-teal-400 rounded-lg text-base">
+                              Dismiss<span className="block text-teal-600 text-xs leading-tight">Remove All</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Info ───────────────────────────────────────────────────────── */}
+        {page === 'info' && (
+          <div className="space-y-4 pb-8" style={{ paddingTop: '1rem' }}>
+            <div className={cardClass}>
+              <div className="mb-3 pb-2 border-b border-slate-700/30 text-center">
+                <h2 className="text-4xl font-black text-white tracking-wide">About</h2>
+                <h2 className="text-4xl font-black text-white tracking-wide">pivot.watch</h2>
+              </div>
+              <p className="text-teal-300 italic text-xl text-center mb-3">v{APP_VERSION}</p>
+              <div className="flex items-center gap-4 mb-4">
+                <img src={BILL_PHOTO} alt="Bill Spencer" className="w-14 h-14 rounded-full object-cover border-2 border-teal-600 shadow-lg shrink-0" />
+                <div>
+                  <p className="font-bold text-white text-xl">Bill Spencer</p>
+                  <p className="text-teal-400 italic text-xl">Founder</p>
+                  <a href="mailto:hello@pivot.watch" className="text-teal-400 text-xl mt-1 block">hello@pivot.watch</a>
+                </div>
+              </div>
+              <p className="text-teal-200 text-2xl font-bold italic mb-3">Watch your world.</p>
+              <div className="space-y-3 text-gray-200 text-xl leading-relaxed">
+                <p>Where you've been. Where you're going. Where you want to be.</p>
+                <p>"Just check LinkedIn," they say. But the right role is scattered across dozens of boards, federal sites, and per-employer pages -- and it surfaces, gets filled, and disappears before you ever see it.</p>
+                <p>So we built pivot.watch to bring it all together: a simple way to save the kinds of jobs you care about and get notified when a matching role posts.</p>
+                <p>pivot.watch monitors public job feeds across federal, private, and per-employer sources. No ads. No subscriptions. Just useful answers.</p>
+              </div>
+            </div>
+            <div className={cardClass}>
+              <h3 className="text-white text-2xl font-bold mb-4 text-center">How it works</h3>
+              <div className="space-y-4">
+                <div className="flex gap-3 items-start"><span className="text-teal-400 text-2xl font-black w-7 shrink-0">1.</span><p className="text-gray-100 text-xl">Set up a saved search: company (or any), sector, level, location with radius (or Remote). We watch and alert when a matching role posts.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-teal-400 text-2xl font-black w-7 shrink-0">2.</span><p className="text-gray-100 text-xl">pivot.watch checks public job feeds every 12 hours and matches new postings against your saved searches. Premium users will get faster checks.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-teal-400 text-2xl font-black w-7 shrink-0">3.</span><p className="text-gray-100 text-xl">When a job matches your filters, you'll get a notification with title, company, level, and link to apply.</p></div>
+                <div className="flex gap-3 items-start"><span className="text-teal-400 text-2xl font-black w-7 shrink-0">4.</span><p className="text-gray-100 text-xl">pivot.watch is free. Premium features may include faster check intervals, salary filtering, and per-employer alerts.</p></div>
+              </div>
+            </div>
+            <div className={cardClass}>
+              <h3 className="text-white text-2xl font-bold mb-3">Data Sources</h3>
+              <div className="space-y-2 text-gray-100 text-xl leading-relaxed">
+                <p><strong className="text-white">USAJobs</strong> &mdash; Federal jobs from data.usajobs.gov.</p>
+                <p><strong className="text-white">Adzuna</strong> &mdash; US private-board aggregator covering thousands of employer sites.</p>
+                <p><strong className="text-white">Greenhouse</strong> &mdash; Per-employer career feeds for companies you explicitly watch.</p>
+              </div>
+            </div>
+            <div className={cardClass}>
+              <h3 className="font-bold text-white mb-1 text-2xl">Privacy Policy</h3>
+              <p className="text-gray-200 text-xl mb-3">Last updated: April 2026</p>
+              <div className="space-y-3 text-gray-200 text-xl leading-relaxed">
+                <p><strong className="text-white">We collect:</strong> your email address, your watched searches, and anonymous usage data.</p>
+                <p><strong className="text-white">Addresses are safe:</strong> When you search for a place, we send the address you typed to Google's geocoding service to convert it to coordinates. We don't store your address — only the resulting latitude/longitude and the name you give the place.</p>
+                <p><strong className="text-white">How we use it:</strong> We do not sell your personal information. Ever.</p>
+                <p><strong className="text-white">Data sources:</strong> Job posting information is based on publicly available feeds from USAJobs, Adzuna, and per-employer Greenhouse boards.</p>
+                <p><strong className="text-white">Your rights:</strong> You may delete your account and all associated data at any time.</p>
+                <p><strong className="text-white">Disclaimer:</strong> Job posting information is provided for informational purposes only. Always confirm details directly with the employer. pivot.watch is not a substitute for direct employer contact.</p>
+                <a href="mailto:hello@pivot.watch" className="text-teal-400 text-xl">hello@pivot.watch</a>
+              </div>
+            </div>
+            {/* Try our other Watchlist apps */}
+            <div className={cardClass}>
+              <h3 className="text-white text-2xl font-bold mb-3 text-center">Try our other Watchlist apps</h3>
+              <div className="space-y-3">
+                <a href="https://3brains.app" target="_blank" rel="noopener noreferrer"
+                  className="block w-full py-4 bg-teal-700 hover:bg-slate-800 text-white text-center rounded-xl text-xl font-semibold">
+                  Visit Our Site
+                </a>
+              </div>
+            </div>
+            <div className="px-1 space-y-3 pb-2">
+              <div className="p-3 bg-black/30 rounded-xl"><p className="font-medium text-gray-200 text-xl text-center">{user && user.email}</p></div>
+              <button onClick={doLogout} className="w-full py-4 bg-teal-700 hover:bg-slate-800 text-white rounded-xl text-2xl font-bold">Sign Out</button>
+              <button onClick={() => setShowDangerZone(!showDangerZone)} className="w-full py-3 text-gray-300 text-xl text-center">{showDangerZone ? 'Hide' : 'Account Removal'}</button>
+              {showDangerZone && (
+                <div className="space-y-3">
+                  {!showDeleteConfirm
+                    ? <button onClick={() => setShowDeleteConfirm(true)} className="w-full py-4 bg-gray-900/70 border border-slate-800 text-teal-400 rounded-xl text-xl">Delete Account</button>
+                    : <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3">
+                        <h3 className="font-bold text-teal-400 text-xl">Are you sure?</h3>
+                        <p className="text-teal-300 text-xl">This will permanently delete your account and all data.</p>
+                        <button onClick={doDeleteAccount} className="w-full py-4 bg-teal-700 text-white rounded-xl font-bold text-xl">Yes, Permanently Delete My Account</button>
+                        <button onClick={() => { setShowDeleteConfirm(false); setShowDangerZone(false); }} className="w-full py-4 bg-gray-800 border border-gray-600 text-gray-100 rounded-xl font-medium text-xl">Cancel</button>
+                      </div>
+                  }
+                </div>
+              )}
+            </div>
+            <p className="text-white/30 text-center text-sm pb-4">v{APP_VERSION}</p>
+          </div>
+        )}
+
+      </div>
+
+      {/* ── Bottom nav ───────────────────────────────────────────────────── */}
+      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(10,10,10,0.95)', backdropFilter: 'blur(8px)', borderTop: '1px solid #1e3a4a', padding: '0.5rem 1rem', paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
+        <div className="flex justify-around max-w-sm mx-auto">
+          <button onClick={() => setPage('search')} className={'flex flex-col items-center gap-0.5 px-1 py-1 ' + (page === 'search' ? 'text-teal-400' : 'text-gray-200')}>
+            <SearchIcon /><span className="text-xl font-medium">Search</span>
+          </button>
+          <button onClick={() => setPage('watchlist')} className={'flex flex-col items-center gap-0.5 px-1 py-1 ' + (page === 'watchlist' ? 'text-teal-400' : 'text-gray-200')}>
+            <HeartIcon /><span className="text-xl font-medium">Watchlist</span>
+          </button>
+          <button onClick={() => setPage('searches')} className={'flex flex-col items-center gap-0.5 px-1 py-1 ' + (page === 'searches' ? 'text-teal-400' : 'text-gray-200')}>
+            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+            <span className="text-xl font-medium">My Searches</span>
+          </button>
+          <button onClick={() => setPage('info')} className={'flex flex-col items-center gap-0.5 px-1 py-1 ' + (page === 'info' ? 'text-teal-400' : 'text-gray-200')}>
+            <InfoIcon /><span className="text-xl font-medium">Info</span>
+          </button>
+          <button onClick={() => setPage('alerts')} className={'flex flex-col items-center gap-0.5 px-1 py-1 relative ' + (page === 'alerts' ? 'text-teal-400' : 'text-gray-200')}>
+            <BellIcon red={unreadCount > 0} />
+            {unreadCount > 0 && <span className="absolute top-0 right-1 bg-teal-600 text-white text-xl font-bold rounded-full w-4 h-4 flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>}
+            <span className="text-xl font-medium" style={unreadCount > 0 ? {color:'#0d9488'} : {}}>Alerts</span>
+          </button>
+        </div>
+        <p className="text-center text-gray-600 text-xs mt-1" style={{display: page === 'search' ? 'none' : 'block'}}>app v{APP_VERSION} | api v{apiVersion}</p>
+      </div>
+    </PageWrapper>
+  );
+}
+
+ReactDOM.render(React.createElement(App), document.getElementById('root'));
+</script>
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
+</body>
+</html>
