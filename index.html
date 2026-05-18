@@ -52,7 +52,7 @@ const API_BASE = 'https://pivot-backend-cr4l.onrender.com';
 const PV_BG = '/pivot-bg.jpg';
 const PV_LOGIN_BG = '/pivot-bg.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
-const APP_VERSION = '0.1.15';
+const APP_VERSION = '0.1.16';
 
 // Sector dropdown — broad enough to land most postings from federal + private boards.
 // Backend stores the slug; UI shows the label. Sorted alphabetically by label.
@@ -150,6 +150,34 @@ const levelLabel = (slug) => {
 const sectorLabel = (slug) => {
   const found = SECTORS.find(s => s.slug === slug);
   return found ? found.label : (slug || '');
+};
+
+// Smart careers URL: when the user has filter context (sector/level/location/
+// state), construct a Google `site:` search against the company's domain so the
+// landing page shows filtered jobs. With no filter context, return the
+// directory homepage URL. Returns { url, label }.
+const buildSmartCareersUrl = (entry, filters) => {
+  if (!entry) return null;
+  const parts = [];
+  if (filters && filters.sector) {
+    const lbl = sectorLabel(filters.sector);
+    if (lbl) parts.push(lbl);
+  }
+  if (filters && filters.level) {
+    const lbl = levelLabel(filters.level);
+    if (lbl) parts.push(lbl);
+  }
+  if (filters && filters.location_name) {
+    parts.push(filters.location_name);
+  } else if (filters && filters.state_code && US_STATE_CODE_TO_NAME[filters.state_code]) {
+    parts.push(US_STATE_CODE_TO_NAME[filters.state_code]);
+  }
+  if (parts.length === 0) {
+    return { url: entry.url, label: 'Open ' + entry.name + ' Careers' };
+  }
+  const query = 'site:' + entry.domain + ' careers ' + parts.join(' ');
+  const url = 'https://www.google.com/search?q=' + encodeURIComponent(query);
+  return { url: url, label: 'Find ' + parts.join(' · ') + ' at ' + entry.name };
 };
 
 // Radius value → human label. Used in cards and the drawer header.
@@ -401,6 +429,20 @@ function App() {
   // null marker = "no match in directory and no Google fallback wanted"; we
   // currently always have a fallback, so null is just a "fetch in progress" guard.
   const [careersLinks, setCareersLinks] = useState({});
+
+  // Top Employers browse page state.
+  const [browseDirectory, setBrowseDirectory] = useState(null);  // null = not yet loaded
+  const [browseFilter, setBrowseFilter] = useState('');           // search input
+  const loadBrowseDirectory = async () => {
+    if (browseDirectory !== null) return;  // already loaded
+    try {
+      var r = await fetch(API_BASE + '/pv/careers/directory');
+      if (r.ok) {
+        var data = await r.json();
+        setBrowseDirectory(data.directory || []);
+      }
+    } catch (e) { console.error(e); }
+  };
   const fetchCareersLink = async (company) => {
     var key = (company || '').trim().toLowerCase();
     if (!key) return;
@@ -928,7 +970,32 @@ function App() {
                 {/* Company — free-text, optional */}
                 <div>
                   <label className="text-teal-200 text-sm">Company</label>
-                  <ClearableInput value={newSearch.company} onChange={(e) => setNewSearch(Object.assign({}, newSearch, { company: e.target.value }))} placeholder="Any company (or type a name)" inputClass={iClass} />
+                  <ClearableInput value={newSearch.company} onChange={(e) => {
+                    var v = e.target.value;
+                    setNewSearch(Object.assign({}, newSearch, { company: v }));
+                    // Live directory lookup as user types. Cached client-side
+                    // so re-typing the same name is free.
+                    var key = (v || '').trim();
+                    if (key.length >= 2) { fetchCareersLink(key); }
+                  }} placeholder="Any company (or type a name)" inputClass={iClass} />
+                  {(function(){
+                    var co = (newSearch.company || '').trim();
+                    if (co.length < 2) return null;
+                    var link = careersLinks[co.toLowerCase()];
+                    if (!link || link.source !== 'directory') return null;
+                    var smart = buildSmartCareersUrl(link, newSearch);
+                    if (!smart) return null;
+                    return (
+                      <div className="mt-2 p-3 rounded-lg bg-teal-900/30 border border-teal-700/40 flex items-center gap-3">
+                        {link.logo_url && <img src={link.logo_url} alt="" style={{ width: '32px', height: '32px', borderRadius: '4px', flexShrink: 0 }} loading="lazy" />}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-teal-100 text-base font-semibold truncate">{link.name} is in our directory</p>
+                          <p className="text-teal-300 text-xs">Tap to open now, or keep building this search to monitor matches</p>
+                        </div>
+                        <a href={smart.url} target="_blank" rel="noopener noreferrer" className="px-3 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold shrink-0">Open →</a>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Sector dropdown */}
@@ -1233,10 +1300,27 @@ function App() {
                               if (!co) return null;
                               var link = careersLinks[co.toLowerCase()];
                               if (!link) return null;
+                              // Directory match: use smart-URL builder so saved
+                              // filters (sector/level/location/state) shape the
+                              // landing-page query via Google site: search.
+                              if (link.source === 'directory') {
+                                var smart = buildSmartCareersUrl(link, p);
+                                if (smart) {
+                                  return (
+                                    <a href={smart.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-slate-700/60 hover:bg-slate-700 border border-slate-600/40 text-teal-100 text-base">
+                                      {link.logo_url && <img src={link.logo_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '4px' }} loading="lazy" />}
+                                      <span>🔗 {smart.label}</span>
+                                    </a>
+                                  );
+                                }
+                              }
+                              // Google fallback (company not in directory):
+                              // existing fallback URL already encodes the
+                              // company name; pass-through.
                               return (
                                 <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-slate-700/60 hover:bg-slate-700 border border-slate-600/40 text-teal-100 text-base">
                                   {link.logo_url && <img src={link.logo_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '4px' }} loading="lazy" />}
-                                  <span>{link.source === 'directory' ? ('🔗 Apply at ' + link.name) : ('🔍 Search ' + link.name + ' careers')}</span>
+                                  <span>🔍 Search {link.name} careers</span>
                                 </a>
                               );
                             })()}
@@ -1270,6 +1354,64 @@ function App() {
             )}
           </div>
         )}
+
+        {/* ── Top Employers (Browse) ──────────────────────────────────── */}
+        {page === 'browse' && (() => {
+          // Kick the load if not yet fetched. Effect-equivalent without
+          // useEffect (we already structure other pages this way).
+          if (browseDirectory === null) { loadBrowseDirectory(); }
+          var q = browseFilter.trim().toLowerCase();
+          var filtered = (browseDirectory || []).filter(function(e){
+            if (!q) return true;
+            return e.name.toLowerCase().indexOf(q) !== -1
+                || (e.domain || '').toLowerCase().indexOf(q) !== -1;
+          });
+          return (
+            <div className="space-y-3" style={{ paddingTop: '1rem' }}>
+              <div className="text-center mb-2">
+                <h2 className="text-4xl font-bold text-white">🏢 Top Employers</h2>
+                <p className="text-teal-300 text-base mt-1">Tap a logo to apply, or add to your Watchlist</p>
+              </div>
+              <div>
+                <ClearableInput value={browseFilter} onChange={(e) => setBrowseFilter(e.target.value)} placeholder="Filter by company name…" inputClass={iClass} />
+              </div>
+              {browseDirectory === null && (
+                <p className="text-teal-200 text-center py-6 animate-pulse text-xl">Loading top employers…</p>
+              )}
+              {browseDirectory !== null && filtered.length === 0 && q.length > 0 && (
+                <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/40 text-center">
+                  <p className="text-gray-200 text-lg mb-3">No match for "{browseFilter}" in our top 50.</p>
+                  <a
+                    href={'https://www.google.com/search?q=' + encodeURIComponent(browseFilter.trim() + ' careers')}
+                    target="_blank" rel="noopener noreferrer"
+                    className="inline-block px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-base font-bold"
+                  >
+                    🔍 Search Google for "{browseFilter}" careers →
+                  </a>
+                </div>
+              )}
+              {filtered.map(function(entry){
+                return (
+                  <div key={entry.domain} className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/40 flex items-center gap-3">
+                    <img src={entry.logo_url} alt="" style={{ width: '56px', height: '56px', borderRadius: '8px', flexShrink: 0, background: '#0f172a' }} loading="lazy" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-2xl font-semibold truncate">{entry.name}</p>
+                      <p className="text-gray-400 text-sm truncate">{entry.domain}</p>
+                    </div>
+                    <div className="flex flex-col gap-1 shrink-0">
+                      <a href={entry.url} target="_blank" rel="noopener noreferrer" className="px-3 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold text-center">Open →</a>
+                      <button onClick={() => {
+                        setNewSearch(Object.assign({}, newSearch, { company: entry.name }));
+                        fetchCareersLink(entry.name);
+                        setPage('search');
+                      }} className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-teal-200 text-sm font-bold text-center border border-slate-600/40">+ Watch</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* ── Prospects (saved) ───────────────────────────────────────── */}
         {page === 'searches' && (
@@ -1463,6 +1605,10 @@ function App() {
           </button>
           <button onClick={() => setPage('watchlist')} className={'flex flex-col items-center gap-0.5 px-1 py-1 ' + (page === 'watchlist' ? 'text-teal-400' : 'text-gray-200')}>
             <HeartIcon /><span className="text-xl font-medium">Watchlist</span>
+          </button>
+          <button onClick={() => { setPage('browse'); loadBrowseDirectory(); }} className={'flex flex-col items-center gap-0.5 px-1 py-1 ' + (page === 'browse' ? 'text-teal-400' : 'text-gray-200')}>
+            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+            <span className="text-xl font-medium">Browse</span>
           </button>
           <button onClick={() => setPage('searches')} className={'flex flex-col items-center gap-0.5 px-1 py-1 ' + (page === 'searches' ? 'text-teal-400' : 'text-gray-200')}>
             <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
