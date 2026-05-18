@@ -52,7 +52,7 @@ const API_BASE = 'https://pivot-backend-cr4l.onrender.com';
 const PV_BG = '/pivot-bg.jpg';
 const PV_LOGIN_BG = '/pivot-bg.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
-const APP_VERSION = '0.1.12';
+const APP_VERSION = '0.1.13';
 
 // Sector dropdown — broad enough to land most postings from federal + private boards.
 // Backend stores the slug; UI shows the label. Sorted alphabetically by label.
@@ -548,7 +548,7 @@ function App() {
               setAddSearchMsg('');
             } else if (cands.length > 1) {
               setGeoCandidates(cands);
-              setAddSearchMsg('Multiple matches — tap the right one above, then Add again.');
+              setAddSearchMsg('Multiple matches — tap the right one above, then Save again.');
               return;
             } else {
               setAddSearchMsg("Couldn't find that location. Try a more specific address.");
@@ -1041,7 +1041,7 @@ function App() {
 
                 {/* Add button — always shown */}
                 <button onClick={addSearch} className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-lg flex items-center justify-center gap-2 text-2xl font-bold mt-2">
-                  <PlusIcon /> Add to Watchlist
+                  <PlusIcon /> Save to Watchlist
                 </button>
 
                 {addSearchMsg && <p className="text-teal-300 text-center text-xl">{addSearchMsg}</p>}
