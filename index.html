@@ -52,7 +52,7 @@ const API_BASE = 'https://pivot-backend-cr4l.onrender.com';
 const PV_BG = '/pivot-bg.jpg';
 const PV_LOGIN_BG = '/pivot-bg.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
-const APP_VERSION = '0.1.14';
+const APP_VERSION = '0.1.15';
 
 // Sector dropdown — broad enough to land most postings from federal + private boards.
 // Backend stores the slug; UI shows the label. Sorted alphabetically by label.
@@ -809,7 +809,12 @@ function App() {
                         <p className="text-teal-200 text-base mt-1">💰 {formatSalary(j.salary_min, j.salary_max, j.salary_currency)}</p>
                       )}
                       {j.url && (
-                        <a href={j.url} target="_blank" rel="noopener noreferrer" className="text-teal-300 underline text-base mt-2 inline-block">View posting →</a>
+                        <a href={j.url} target="_blank" rel="noopener noreferrer" className="text-teal-300 underline text-base mt-2 inline-block">{(function(){
+                          if (j.source === 'adzuna')     return 'Open on Adzuna →';
+                          if (j.source === 'greenhouse') return 'Open on Greenhouse →';
+                          if (j.source === 'usajobs')    return 'Open on USAJobs →';
+                          return 'View posting →';
+                        })()}</a>
                       )}
                     </div>
                   </div>
