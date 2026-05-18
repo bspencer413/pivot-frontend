@@ -52,7 +52,7 @@ const API_BASE = 'https://pivot-backend-cr4l.onrender.com';
 const PV_BG = '/pivot-bg.jpg';
 const PV_LOGIN_BG = '/pivot-bg.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
-const APP_VERSION = '0.1.6';
+const APP_VERSION = '0.1.7';
 
 // Sector dropdown — broad enough to land most postings from federal + private boards.
 // Backend stores the slug; UI shows the label. Sorted alphabetically by label.
@@ -270,6 +270,8 @@ function App() {
   const [geoMsg, setGeoMsg] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editingName, setEditingName] = useState('');
+  const [editingCompany, setEditingCompany] = useState('');
+  const [editingRadius, setEditingRadius] = useState('25');
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [drawerData, setDrawerData] = useState(null);
@@ -545,23 +547,25 @@ function App() {
     } catch(e) { console.error('save to my searches failed:', e); }
   };
 
-  const renameSearch = async (id, name) => {
+  const editSearch = async (id, updates) => {
     var token = localStorage.getItem('pv_token');
     try {
       var r = await fetch(API_BASE + '/pv/searches/' + id, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-        body: JSON.stringify({ name: name })
+        body: JSON.stringify(updates)
       });
       if (r.ok) {
         setSearches(function(prev) {
           return prev.map(function(p) {
-            if (p.id === id) return Object.assign({}, p, { name: name });
+            if (p.id === id) return Object.assign({}, p, updates);
             return p;
           });
         });
+        return true;
       }
-    } catch(e) { console.error('rename failed:', e); }
+    } catch(e) { console.error('edit failed:', e); }
+    return false;
   };
 
   const removeSearch = async (id) => {
@@ -896,11 +900,39 @@ function App() {
                   {activeSearches.map(p => (
                     <div key={p.id} className="p-4 rounded-lg border bg-gray-800/50 border-slate-700/30">
                       {editingId === p.id ? (
-                        <div className="space-y-2">
-                          <ClearableInput value={editingName} onChange={(e) => setEditingName(e.target.value)} placeholder="Search name" inputClass="w-full px-3 py-4 border border-teal-700 rounded-lg focus:ring-2 focus:ring-teal-400 text-2xl bg-gray-700 text-white placeholder-gray-400" />
+                        <div className="space-y-3">
+                          <div>
+                            <label className="text-teal-200 text-sm">Name</label>
+                            <ClearableInput value={editingName} onChange={(e) => setEditingName(e.target.value)} placeholder="Pivot name" inputClass="w-full px-3 py-3 border border-teal-700 rounded-lg focus:ring-2 focus:ring-teal-400 text-xl bg-gray-700 text-white placeholder-gray-400" />
+                          </div>
+                          <div>
+                            <label className="text-teal-200 text-sm">Company</label>
+                            <ClearableInput value={editingCompany} onChange={(e) => setEditingCompany(e.target.value)} placeholder="Any company (or type a name)" inputClass="w-full px-3 py-3 border border-teal-700 rounded-lg focus:ring-2 focus:ring-teal-400 text-xl bg-gray-700 text-white placeholder-gray-400" />
+                          </div>
+                          <div>
+                            <label className="text-teal-200 text-sm">Radius</label>
+                            <div className="grid grid-cols-5 gap-2">
+                              {RADIUS_VALUES.map(r => (
+                                <button
+                                  key={r}
+                                  onClick={() => setEditingRadius(r)}
+                                  className={'py-2 rounded-lg text-base font-bold border ' + (editingRadius === r ? 'bg-teal-600 text-white border-teal-400' : 'bg-slate-800/60 text-teal-200 border-slate-700/40')}
+                                >
+                                  {r === 'remote' ? 'Remote' : (r + ' mi')}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                           <div className="flex gap-2">
-                            <button onClick={async () => { await renameSearch(p.id, smartTitleCase(editingName)); setEditingId(null); setEditingName(''); }} className="flex-1 py-4 bg-teal-600 text-white rounded-lg text-2xl font-bold">Save</button>
-                            <button onClick={() => { setEditingId(null); setEditingName(''); }} className="flex-1 py-4 bg-gray-600 text-gray-200 rounded-lg text-2xl">Cancel</button>
+                            <button onClick={async () => {
+                              var ok = await editSearch(p.id, {
+                                name: smartTitleCase((editingName || '').trim()) || p.name,
+                                company: (editingCompany || '').trim() || null,
+                                radius_value: editingRadius,
+                              });
+                              if (ok) { setEditingId(null); setEditingName(''); setEditingCompany(''); setEditingRadius('25'); }
+                            }} className="flex-1 py-3 bg-teal-600 text-white rounded-lg text-xl font-bold">Save</button>
+                            <button onClick={() => { setEditingId(null); setEditingName(''); setEditingCompany(''); setEditingRadius('25'); }} className="flex-1 py-3 bg-gray-600 text-gray-200 rounded-lg text-xl">Cancel</button>
                           </div>
                         </div>
                       ) : (
@@ -910,10 +942,16 @@ function App() {
                               <h3 className="font-semibold text-2xl text-white hover:text-teal-300 underline decoration-dotted truncate">{p.name}</h3>
                             </button>
                             <p className="text-xl text-gray-200">{p.radius_value === 'remote' ? 'Remote' : ((p.location_name || (Number(p.lat).toFixed(2) + ', ' + Number(p.lng).toFixed(2))) + ' · ' + radiusLabel(p.radius_value))}</p>
+                            {p.company && <p className="text-base text-teal-200 mt-1">🏢 {p.company}</p>}
                             <div className="flex items-center gap-1 mt-1"><CheckIcon /><span className="text-xl text-teal-400">Watching for new jobs</span></div>
                           </div>
                           <div className="flex gap-2 ml-2 shrink-0">
-                            <button onClick={() => { setEditingId(p.id); setEditingName(p.name); }} className="p-2 text-teal-400 hover:bg-slate-700/30 rounded-lg"><EditIcon /></button>
+                            <button onClick={() => {
+                              setEditingId(p.id);
+                              setEditingName(p.name || '');
+                              setEditingCompany(p.company || '');
+                              setEditingRadius(p.radius_value || '25');
+                            }} className="p-2 text-teal-400 hover:bg-slate-700/30 rounded-lg"><EditIcon /></button>
                             <button onClick={() => removeSearch(p.id)} className="p-2 text-teal-400 hover:bg-slate-700/30 rounded-lg"><TrashIcon /></button>
                           </div>
                         </div>
