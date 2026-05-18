@@ -52,7 +52,7 @@ const API_BASE = 'https://pivot-backend-cr4l.onrender.com';
 const PV_BG = '/pivot-bg.jpg';
 const PV_LOGIN_BG = '/pivot-bg.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
-const APP_VERSION = '0.1.9';
+const APP_VERSION = '0.1.12';
 
 // Sector dropdown — broad enough to land most postings from federal + private boards.
 // Backend stores the slug; UI shows the label. Sorted alphabetically by label.
@@ -87,7 +87,46 @@ const LEVELS = [
   { slug: 'executive', label: 'Executive' },
 ];
 
-const RADIUS_VALUES = ['1', '5', '10', '25', 'remote'];
+const RADIUS_VALUES = ['1', '5', '10', '25'];
+
+// Where-mode model (v0.1.11+). Three modes capture how a user wants to
+// specify location: a specific place + radius, a US state, or no geo filter.
+const WHERE_MODES = [
+  { code: 'address',  emoji: '📍', label: 'Near a place' },
+  { code: 'state',    emoji: '🗺️', label: 'In a state' },
+  { code: 'anywhere', emoji: '🌎', label: 'Anywhere' },
+];
+
+// US states + DC, alphabetical. Used by the state-mode dropdown.
+const US_STATES = [
+  { code: 'AL', name: 'Alabama' },        { code: 'AK', name: 'Alaska' },
+  { code: 'AZ', name: 'Arizona' },        { code: 'AR', name: 'Arkansas' },
+  { code: 'CA', name: 'California' },     { code: 'CO', name: 'Colorado' },
+  { code: 'CT', name: 'Connecticut' },    { code: 'DE', name: 'Delaware' },
+  { code: 'DC', name: 'District of Columbia' },
+  { code: 'FL', name: 'Florida' },        { code: 'GA', name: 'Georgia' },
+  { code: 'HI', name: 'Hawaii' },         { code: 'ID', name: 'Idaho' },
+  { code: 'IL', name: 'Illinois' },       { code: 'IN', name: 'Indiana' },
+  { code: 'IA', name: 'Iowa' },           { code: 'KS', name: 'Kansas' },
+  { code: 'KY', name: 'Kentucky' },       { code: 'LA', name: 'Louisiana' },
+  { code: 'ME', name: 'Maine' },          { code: 'MD', name: 'Maryland' },
+  { code: 'MA', name: 'Massachusetts' },  { code: 'MI', name: 'Michigan' },
+  { code: 'MN', name: 'Minnesota' },      { code: 'MS', name: 'Mississippi' },
+  { code: 'MO', name: 'Missouri' },       { code: 'MT', name: 'Montana' },
+  { code: 'NE', name: 'Nebraska' },       { code: 'NV', name: 'Nevada' },
+  { code: 'NH', name: 'New Hampshire' },  { code: 'NJ', name: 'New Jersey' },
+  { code: 'NM', name: 'New Mexico' },     { code: 'NY', name: 'New York' },
+  { code: 'NC', name: 'North Carolina' }, { code: 'ND', name: 'North Dakota' },
+  { code: 'OH', name: 'Ohio' },           { code: 'OK', name: 'Oklahoma' },
+  { code: 'OR', name: 'Oregon' },         { code: 'PA', name: 'Pennsylvania' },
+  { code: 'RI', name: 'Rhode Island' },   { code: 'SC', name: 'South Carolina' },
+  { code: 'SD', name: 'South Dakota' },   { code: 'TN', name: 'Tennessee' },
+  { code: 'TX', name: 'Texas' },          { code: 'UT', name: 'Utah' },
+  { code: 'VT', name: 'Vermont' },        { code: 'VA', name: 'Virginia' },
+  { code: 'WA', name: 'Washington' },     { code: 'WV', name: 'West Virginia' },
+  { code: 'WI', name: 'Wisconsin' },      { code: 'WY', name: 'Wyoming' },
+];
+const US_STATE_CODE_TO_NAME = US_STATES.reduce(function(acc, s) { acc[s.code] = s.name; return acc; }, {});
 
 // ── pivot.watch helpers ───────────────────────────────────────────────────────
 
@@ -274,6 +313,8 @@ function App() {
     lat: '',
     lng: '',
     radius_value: '25',
+    where_mode: 'address',
+    state_code: '',
   });
   const [geoQuery, setGeoQuery] = useState('');
   const [geoCandidates, setGeoCandidates] = useState([]);
@@ -284,6 +325,14 @@ function App() {
   const [editingName, setEditingName] = useState('');
   const [editingCompany, setEditingCompany] = useState('');
   const [editingRadius, setEditingRadius] = useState('25');
+  const [editingWhereMode, setEditingWhereMode] = useState('address');
+  const [editingStateCode, setEditingStateCode] = useState('');
+  const [editingLocationName, setEditingLocationName] = useState('');
+  const [editingLat, setEditingLat] = useState(null);
+  const [editingLng, setEditingLng] = useState(null);
+  const [editGeoQuery, setEditGeoQuery] = useState('');
+  const [editGeoCandidates, setEditGeoCandidates] = useState([]);
+  const [editGeoMsg, setEditGeoMsg] = useState('');
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [drawerData, setDrawerData] = useState(null);
@@ -324,7 +373,18 @@ function App() {
       const token = localStorage.getItem('pv_token');
       const r = await fetch(API_BASE + '/pv/searches', { headers: { 'Authorization': 'Bearer ' + token } });
       if (!r.ok) throw new Error('Failed');
-      setSearches(await r.json());
+      var rows = await r.json();
+      setSearches(rows);
+      // Prefetch careers links for every distinct company filter — one fetch
+      // per unique company. Cached client-side; subsequent renders are free.
+      var seen = {};
+      for (var i = 0; i < rows.length; i++) {
+        var co = (rows[i].company || '').trim();
+        if (co && !seen[co.toLowerCase()]) {
+          seen[co.toLowerCase()] = true;
+          fetchCareersLink(co);
+        }
+      }
     } catch (e) { console.error(e); }
   };
 
@@ -335,6 +395,24 @@ function App() {
       if (!r.ok) throw new Error('Failed');
       setNotifications(await r.json());
     } catch (e) { console.error(e); }
+  };
+
+  // Careers-link cache: { [lowercased company name]: { name, url, domain, logo_url, source } | null }
+  // null marker = "no match in directory and no Google fallback wanted"; we
+  // currently always have a fallback, so null is just a "fetch in progress" guard.
+  const [careersLinks, setCareersLinks] = useState({});
+  const fetchCareersLink = async (company) => {
+    var key = (company || '').trim().toLowerCase();
+    if (!key) return;
+    if (careersLinks[key] !== undefined) return; // already cached or in-flight
+    setCareersLinks(function(prev){ var n = Object.assign({}, prev); n[key] = null; return n; });
+    try {
+      var r = await fetch(API_BASE + '/pv/careers?company=' + encodeURIComponent(company.trim()));
+      if (r.ok) {
+        var data = await r.json();
+        setCareersLinks(function(prev){ var n = Object.assign({}, prev); n[key] = data; return n; });
+      }
+    } catch (e) { /* keep null; row will hide the link */ }
   };
 
   const dismissAlert = async (notifId) => {
@@ -431,37 +509,81 @@ function App() {
   const addSearch = async () => {
     setAddSearchMsg('');
     var name = (newSearch.name || '').trim();
-    var radius_value = newSearch.radius_value || '25';
-    if (RADIUS_VALUES.indexOf(radius_value) === -1) radius_value = '25';
     var company = (newSearch.company || '').trim() || null;
     var sector  = newSearch.sector || null;
     var level   = newSearch.level || null;
-    // Location: required unless radius is 'remote'.
+    var where_mode = newSearch.where_mode || 'address';
+    var state_code = (newSearch.state_code || '').toUpperCase() || null;
+    var radius_value = newSearch.radius_value || '25';
+    if (RADIUS_VALUES.indexOf(radius_value) === -1) radius_value = '25';
+
+    // Per-mode validation + payload assembly.
     var lat = null, lng = null, location_name = null;
-    if (radius_value !== 'remote') {
+    var token = localStorage.getItem('pv_token');
+
+    if (where_mode === 'address') {
       if (geoPicked) {
         lat = geoPicked.lat;
         lng = geoPicked.lng;
         location_name = geoPicked.formatted_address;
-      } else if (newSearch.lat && newSearch.lng) {
-        lat = parseFloat(newSearch.lat);
-        lng = parseFloat(newSearch.lng);
-        location_name = newSearch.location_name || null;
+      } else if (geoQuery && geoQuery.trim().length >= 2) {
+        // Auto-geocode: user typed a location but never tapped Find Location.
+        // Run the lookup silently. Single match → use it; multiple → prompt.
+        setAddSearchMsg('Looking up location…');
+        try {
+          var gr = await fetch(API_BASE + '/pv/geocode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ query: geoQuery.trim() })
+          });
+          if (gr.ok) {
+            var gdata = await gr.json();
+            var cands = gdata.candidates || [];
+            if (cands.length === 1) {
+              setGeoPicked(cands[0]);
+              setGeoCandidates(cands);
+              lat = cands[0].lat;
+              lng = cands[0].lng;
+              location_name = cands[0].formatted_address;
+              setAddSearchMsg('');
+            } else if (cands.length > 1) {
+              setGeoCandidates(cands);
+              setAddSearchMsg('Multiple matches — tap the right one above, then Add again.');
+              return;
+            } else {
+              setAddSearchMsg("Couldn't find that location. Try a more specific address.");
+              return;
+            }
+          } else {
+            setAddSearchMsg('Location lookup failed. Try again or pick "Anywhere".');
+            return;
+          }
+        } catch (e) {
+          setAddSearchMsg('Network error during location lookup.');
+          return;
+        }
       }
       if (lat == null || lng == null || isNaN(lat) || isNaN(lng)) {
-        setAddSearchMsg('Pick a location or use My Location, or set radius to Remote.');
+        setAddSearchMsg('Please enter a location (city, ZIP, or address) — required for "Near a place" searches.');
         return;
       }
-    }
+    } else if (where_mode === 'state') {
+      if (!state_code || state_code.length !== 2 || !US_STATE_CODE_TO_NAME[state_code]) {
+        setAddSearchMsg('Please pick a state from the dropdown.');
+        return;
+      }
+    } // anywhere: no further validation
+
     if (!name) {
       // Auto-name from the most distinctive filter.
       if (company) name = company;
       else if (sector) name = sectorLabel(sector);
       else if (level) name = levelLabel(level) + ' level';
       else if (location_name) name = location_name.split(',')[0].trim();
-      else name = (radius_value === 'remote') ? 'Remote' : 'My search';
+      else if (where_mode === 'state' && state_code) name = US_STATE_CODE_TO_NAME[state_code];
+      else if (where_mode === 'anywhere') name = 'Anywhere';
+      else name = 'My search';
     }
-    var token = localStorage.getItem('pv_token');
     try {
       var r = await fetch(API_BASE + '/pv/searches', {
         method: 'POST',
@@ -475,6 +597,8 @@ function App() {
           lat: lat,
           lng: lng,
           radius_value: radius_value,
+          where_mode: where_mode,
+          state_code: state_code,
           alert_level: 'realtime',
         })
       });
@@ -483,7 +607,7 @@ function App() {
         setAddSearchMsg((err.detail && typeof err.detail === 'string') ? err.detail : 'Failed to add search.');
         return;
       }
-      setNewSearch({ name: '', company: '', sector: '', level: '', location_name: '', lat: '', lng: '', radius_value: '25' });
+      setNewSearch({ name: '', company: '', sector: '', level: '', location_name: '', lat: '', lng: '', radius_value: '25', where_mode: 'address', state_code: '' });
       setGeoQuery('');
       setGeoCandidates([]);
       setGeoPicked(null);
@@ -608,10 +732,14 @@ function App() {
     if (!drawerData) return null;
     const search = drawerData.search || {};
     const jobs = drawerData.jobs || [];
-    // Subtitle: location + radius for radius searches; "Remote" for remote-only.
-    const subtitle = (search.radius_value === 'remote')
-      ? 'Remote'
-      : ((search.location_name || '') + ' · ' + radiusLabel(search.radius_value));
+    // Subtitle: where-mode aware. Address = "<location> · <radius> mi";
+    // State = "Anywhere in <state name>"; Anywhere = "Anywhere in the US".
+    const wmode = search.where_mode || (search.radius_value === 'remote' ? 'anywhere' : 'address');
+    const subtitle = (wmode === 'anywhere')
+      ? 'Anywhere in the US'
+      : (wmode === 'state')
+        ? ('Anywhere in ' + (US_STATE_CODE_TO_NAME[search.state_code] || search.state_code || 'a state'))
+        : ((search.location_name || '') + ' · ' + radiusLabel(search.radius_value));
     // Filter summary chips for the header card.
     const filterChips = [];
     if (search.company) filterChips.push(search.company);
@@ -719,7 +847,7 @@ function App() {
   };
 
   const PT = isPhone ? '41vh' : isTablet ? '36vh' : '34vh';
-  const cardClass = 'rounded-2xl p-4 shadow-2xl border border-teal-700/40 bg-gray-900/80 backdrop-blur-sm';
+  const cardClass = 'rounded-2xl p-4 shadow-2xl border border-teal-700/40 bg-gray-900/55 backdrop-blur-sm';
   const iClass = 'w-full px-4 py-3 rounded-xl bg-white/10 border border-teal-700/40 text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-teal-400 text-xl';
   const containerClass = (page === 'info') ? 'w-full max-w-3xl mx-auto px-3' : 'w-full px-3';
   const unreadCount = notifications.length;
@@ -734,7 +862,7 @@ function App() {
           <p className="text-teal-200 font-bold italic text-center" style={{ fontSize: isPhone ? '1.5rem' : '1.8rem', textShadow: '0 2px 10px rgba(0,0,0,0.9), 0 0 16px rgba(0,0,0,0.8)', marginTop: '0.5rem', lineHeight: '1' }}>Find your future</p>
         </div>
         <div style={{ paddingLeft: '1.5rem', paddingRight: '1.5rem', paddingTop: '0.5rem' }}>
-          <div className="rounded-2xl p-4 shadow-2xl border border-teal-400/50 space-y-3" style={{ backgroundColor: 'rgba(28,25,23,0.85)', backdropFilter: 'blur(8px)' }}>
+          <div className="rounded-2xl p-4 shadow-2xl border border-teal-400/50 space-y-3" style={{ backgroundColor: 'rgba(28,25,23,0.55)', backdropFilter: 'blur(8px)' }}>
             <input id="ew-login-email" type="email" name="ew-login-email" placeholder="Email address" value={email} onChange={(e) => setEmail(e.target.value)} onFocus={(e) => { setTimeout(() => { e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 350); }} onKeyPress={(e) => e.key === 'Enter' && doAuth('login')} autoComplete="email" autoCorrect="off" autoCapitalize="off" spellCheck="false" className="w-full px-4 py-3 rounded-xl bg-white/15 border border-white/30 text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-teal-400 text-xl" />
             <div className="relative">
               <input id="ew-login-password" type={showPassword ? 'text' : 'password'} name="ew-login-password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} onFocus={(e) => { setTimeout(() => { e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 350); }} onKeyPress={(e) => e.key === 'Enter' && doAuth('login')} autoComplete="current-password" autoCorrect="off" autoCapitalize="off" spellCheck="false" className="w-full px-4 py-3 rounded-xl bg-white/15 border border-white/30 text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-teal-400 text-xl" />
@@ -783,7 +911,7 @@ function App() {
             <div className="flex flex-col items-center justify-end" style={{ minHeight: SEARCH_PT, marginTop: '-' + SEARCH_PT, paddingTop: '0.5rem', paddingBottom: '0.5rem', pointerEvents: 'none', overflow: 'visible' }}>
               <p className="text-teal-300 font-bold italic text-center" style={{ fontSize: isPhone ? '3.5rem' : '4.5rem', textShadow: '0 2px 12px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.85)', marginTop: '0.25rem', lineHeight: '1' }}>Watch for<br />New Pivots</p>
             </div>
-            <div className={cardClass} style={{ overflowY: 'auto', maxHeight: 'calc(100dvh - ' + SEARCH_PT + ' - 7rem)', backgroundColor: 'rgba(15,23,42,0.85)' }}>
+            <div className={cardClass} style={{ overflowY: 'auto', maxHeight: 'calc(100dvh - ' + SEARCH_PT + ' - 7rem)', backgroundColor: 'rgba(15,23,42,0.55)' }}>
               <div className="space-y-3">
 
                 {/* Company — free-text, optional */}
@@ -810,26 +938,27 @@ function App() {
                   </select>
                 </div>
 
-                {/* Radius — single dropdown with Remote as a value */}
-                <div>
-                  <label className="text-teal-200 text-sm">Radius</label>
-                  <div className="grid grid-cols-5 gap-2">
-                    {RADIUS_VALUES.map(r => (
+                {/* Where mode picker: address / state / anywhere */}
+                <div className="pt-2 border-t border-slate-700/40">
+                  <label className="text-teal-200 text-sm">Where</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {WHERE_MODES.map(m => (
                       <button
-                        key={r}
-                        onClick={() => setNewSearch(Object.assign({}, newSearch, { radius_value: r }))}
-                        className={'py-3 rounded-lg text-base font-bold border ' + (newSearch.radius_value === r ? 'bg-teal-600 text-white border-teal-400' : 'bg-slate-800/60 text-teal-200 border-slate-700/40')}
+                        key={m.code}
+                        onClick={() => setNewSearch(Object.assign({}, newSearch, { where_mode: m.code }))}
+                        className={'py-3 rounded-lg text-base font-bold border ' + (newSearch.where_mode === m.code ? 'bg-teal-600 text-white border-teal-400' : 'bg-slate-800/60 text-teal-200 border-slate-700/40')}
                       >
-                        {r === 'remote' ? 'Remote' : (r + ' mi')}
+                        <div className="text-2xl leading-none">{m.emoji}</div>
+                        <div className="text-xs mt-1">{m.label}</div>
                       </button>
                     ))}
                   </div>
                 </div>
 
-                {/* Location section: hidden when radius=Remote */}
-                {!isRemote && (
-                  <div className="space-y-2 pt-2 border-t border-slate-700/40">
-                    <label className="text-teal-200 text-sm">Location (within {newSearch.radius_value} mi)</label>
+                {/* Address mode: location input + radius row */}
+                {newSearch.where_mode === 'address' && (
+                  <div className="space-y-2">
+                    <label className="text-teal-200 text-sm">Location <span className="text-rose-300">(required)</span></label>
                     <input
                       type="text"
                       value={geoQuery}
@@ -868,6 +997,38 @@ function App() {
                         })}
                       </div>
                     )}
+                    <label className="text-teal-200 text-sm pt-1 block">Radius</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {RADIUS_VALUES.map(r => (
+                        <button
+                          key={r}
+                          onClick={() => setNewSearch(Object.assign({}, newSearch, { radius_value: r }))}
+                          className={'py-3 rounded-lg text-base font-bold border ' + (newSearch.radius_value === r ? 'bg-teal-600 text-white border-teal-400' : 'bg-slate-800/60 text-teal-200 border-slate-700/40')}
+                        >
+                          {r} mi
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* State mode: dropdown of 50 states + DC */}
+                {newSearch.where_mode === 'state' && (
+                  <div className="space-y-2">
+                    <label className="text-teal-200 text-sm">State <span className="text-rose-300">(required)</span></label>
+                    <select value={newSearch.state_code} onChange={(e) => setNewSearch(Object.assign({}, newSearch, { state_code: e.target.value }))} className={iClass + ' appearance-none'}>
+                      <option value="">— pick a state —</option>
+                      {US_STATES.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
+                    </select>
+                    <p className="text-teal-300/70 text-xs">Matches any job listed anywhere in the chosen state, plus all remote-work postings.</p>
+                  </div>
+                )}
+
+                {/* Anywhere mode: warning text */}
+                {newSearch.where_mode === 'anywhere' && (
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-900/20 p-3">
+                    <p className="text-amber-200 text-base font-bold">🌎 No location filter</p>
+                    <p className="text-amber-100/80 text-sm mt-1">Shows matching jobs anywhere in the US. Likely a lot of results — narrow with sector, level, or company filters.</p>
                   </div>
                 )}
 
@@ -922,29 +1083,130 @@ function App() {
                             <ClearableInput value={editingCompany} onChange={(e) => setEditingCompany(e.target.value)} placeholder="Any company (or type a name)" inputClass="w-full px-3 py-3 border border-teal-700 rounded-lg focus:ring-2 focus:ring-teal-400 text-xl bg-gray-700 text-white placeholder-gray-400" />
                           </div>
                           <div>
-                            <label className="text-teal-200 text-sm">Radius</label>
-                            <div className="grid grid-cols-5 gap-2">
-                              {RADIUS_VALUES.map(r => (
+                            <label className="text-teal-200 text-sm">Where</label>
+                            <div className="grid grid-cols-3 gap-2">
+                              {WHERE_MODES.map(m => (
                                 <button
-                                  key={r}
-                                  onClick={() => setEditingRadius(r)}
-                                  className={'py-2 rounded-lg text-base font-bold border ' + (editingRadius === r ? 'bg-teal-600 text-white border-teal-400' : 'bg-slate-800/60 text-teal-200 border-slate-700/40')}
+                                  key={m.code}
+                                  onClick={() => setEditingWhereMode(m.code)}
+                                  className={'py-2 rounded-lg text-base font-bold border ' + (editingWhereMode === m.code ? 'bg-teal-600 text-white border-teal-400' : 'bg-slate-800/60 text-teal-200 border-slate-700/40')}
                                 >
-                                  {r === 'remote' ? 'Remote' : (r + ' mi')}
+                                  <div className="text-xl leading-none">{m.emoji}</div>
+                                  <div className="text-xs mt-0.5">{m.label}</div>
                                 </button>
                               ))}
                             </div>
                           </div>
+                          {editingWhereMode === 'address' && (
+                            <div className="space-y-2">
+                              <label className="text-teal-200 text-sm">Location <span className="text-rose-300">(required)</span></label>
+                              {editingLocationName && (
+                                <p className="text-teal-300 text-base">📍 {editingLocationName}</p>
+                              )}
+                              <ClearableInput
+                                value={editGeoQuery}
+                                onChange={(e) => { setEditGeoQuery(e.target.value); setEditGeoMsg(''); }}
+                                placeholder="Type a new location (or keep current)"
+                                inputClass="w-full px-3 py-3 border border-teal-700 rounded-lg focus:ring-2 focus:ring-teal-400 text-xl bg-gray-700 text-white placeholder-gray-400"
+                              />
+                              <button onClick={async () => {
+                                var q = (editGeoQuery || '').trim();
+                                if (q.length < 2) { setEditGeoMsg('Type a city, address, or landmark.'); return; }
+                                setEditGeoMsg('Looking up…');
+                                try {
+                                  var tk = localStorage.getItem('pv_token');
+                                  var gr = await fetch(API_BASE + '/pv/geocode', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tk },
+                                    body: JSON.stringify({ query: q })
+                                  });
+                                  if (gr.ok) {
+                                    var gd = await gr.json();
+                                    var cs = gd.candidates || [];
+                                    setEditGeoCandidates(cs);
+                                    if (cs.length === 0) setEditGeoMsg('No matches. Try a different query.');
+                                    else if (cs.length === 1) {
+                                      setEditingLat(cs[0].lat); setEditingLng(cs[0].lng);
+                                      setEditingLocationName(cs[0].formatted_address);
+                                      setEditGeoMsg(''); setEditGeoQuery('');
+                                    } else { setEditGeoMsg('Pick one from below.'); }
+                                  } else { setEditGeoMsg('Lookup failed.'); }
+                                } catch (e) { setEditGeoMsg('Network error.'); }
+                              }} className="w-full py-2 bg-teal-700 text-white rounded-lg text-base font-bold">Find Location</button>
+                              {editGeoMsg && <p className="text-teal-300 text-center text-sm">{editGeoMsg}</p>}
+                              {editGeoCandidates.length > 1 && (
+                                <div className="space-y-2">
+                                  {editGeoCandidates.map(function(c, i) {
+                                    return (
+                                      <button key={c.place_id || i} onClick={function(){ setEditingLat(c.lat); setEditingLng(c.lng); setEditingLocationName(c.formatted_address); setEditGeoCandidates([]); setEditGeoQuery(''); setEditGeoMsg(''); }} className="w-full text-left p-2 rounded-lg border bg-slate-800/60 border-slate-700/40 text-teal-100 hover:border-teal-600">
+                                        <span className="text-base">{c.formatted_address}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              <label className="text-teal-200 text-sm pt-1 block">Radius</label>
+                              <div className="grid grid-cols-4 gap-2">
+                                {RADIUS_VALUES.map(r => (
+                                  <button
+                                    key={r}
+                                    onClick={() => setEditingRadius(r)}
+                                    className={'py-2 rounded-lg text-base font-bold border ' + (editingRadius === r ? 'bg-teal-600 text-white border-teal-400' : 'bg-slate-800/60 text-teal-200 border-slate-700/40')}
+                                  >
+                                    {r} mi
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {editingWhereMode === 'state' && (
+                            <div>
+                              <label className="text-teal-200 text-sm">State <span className="text-rose-300">(required)</span></label>
+                              <select value={editingStateCode} onChange={(e) => setEditingStateCode(e.target.value)} className="w-full px-3 py-3 border border-teal-700 rounded-lg focus:ring-2 focus:ring-teal-400 text-xl bg-gray-700 text-white appearance-none">
+                                <option value="">— pick a state —</option>
+                                {US_STATES.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
+                              </select>
+                            </div>
+                          )}
+                          {editingWhereMode === 'anywhere' && (
+                            <div className="rounded-lg border border-amber-500/40 bg-amber-900/20 p-3">
+                              <p className="text-amber-200 text-sm font-bold">🌎 No location filter — every matching job nationwide.</p>
+                            </div>
+                          )}
                           <div className="flex gap-2">
                             <button onClick={async () => {
-                              var ok = await editSearch(p.id, {
+                              // Per-mode validation on Save.
+                              if (editingWhereMode === 'address') {
+                                if (editingLat == null || editingLng == null) {
+                                  setEditGeoMsg('Please set a location (required for "Near a place").');
+                                  return;
+                                }
+                              } else if (editingWhereMode === 'state') {
+                                if (!editingStateCode) {
+                                  setEditGeoMsg('Please pick a state.');
+                                  return;
+                                }
+                              }
+                              var payload = {
                                 name: smartTitleCase((editingName || '').trim()) || p.name,
                                 company: (editingCompany || '').trim() || null,
+                                where_mode: editingWhereMode,
                                 radius_value: editingRadius,
-                              });
-                              if (ok) { setEditingId(null); setEditingName(''); setEditingCompany(''); setEditingRadius('25'); }
+                                state_code: editingWhereMode === 'state' ? editingStateCode : null,
+                                lat: editingWhereMode === 'address' ? editingLat : null,
+                                lng: editingWhereMode === 'address' ? editingLng : null,
+                                location_name: editingWhereMode === 'address' ? editingLocationName : null,
+                              };
+                              var ok = await editSearch(p.id, payload);
+                              if (ok) {
+                                setEditingId(null); setEditingName(''); setEditingCompany('');
+                                setEditingRadius('25'); setEditingWhereMode('address');
+                                setEditingStateCode(''); setEditingLocationName('');
+                                setEditingLat(null); setEditingLng(null);
+                                setEditGeoQuery(''); setEditGeoCandidates([]); setEditGeoMsg('');
+                              }
                             }} className="flex-1 py-3 bg-teal-600 text-white rounded-lg text-xl font-bold">Save</button>
-                            <button onClick={() => { setEditingId(null); setEditingName(''); setEditingCompany(''); setEditingRadius('25'); }} className="flex-1 py-3 bg-gray-600 text-gray-200 rounded-lg text-xl">Cancel</button>
+                            <button onClick={() => { setEditingId(null); setEditingName(''); setEditingCompany(''); setEditingRadius('25'); setEditingWhereMode('address'); setEditingStateCode(''); setEditingLocationName(''); setEditingLat(null); setEditingLng(null); setEditGeoQuery(''); setEditGeoCandidates([]); setEditGeoMsg(''); }} className="flex-1 py-3 bg-gray-600 text-gray-200 rounded-lg text-xl">Cancel</button>
                           </div>
                         </div>
                       ) : (
@@ -953,8 +1215,20 @@ function App() {
                             <button onClick={() => openSearchDrawer(p)} className="text-left w-full">
                               <h3 className="font-semibold text-2xl text-white hover:text-teal-300 underline decoration-dotted truncate">{p.name}</h3>
                             </button>
-                            <p className="text-xl text-gray-200">{p.radius_value === 'remote' ? 'Remote' : ((p.location_name || (Number(p.lat).toFixed(2) + ', ' + Number(p.lng).toFixed(2))) + ' · ' + radiusLabel(p.radius_value))}</p>
+                            <p className="text-xl text-gray-200">{(function(){ var wm = p.where_mode || (p.radius_value === 'remote' ? 'anywhere' : 'address'); if (wm === 'anywhere') return '🌎 Anywhere in the US'; if (wm === 'state') return '🗺️ ' + (US_STATE_CODE_TO_NAME[p.state_code] || p.state_code || 'a state'); return (p.location_name || (p.lat != null && p.lng != null ? (Number(p.lat).toFixed(2) + ', ' + Number(p.lng).toFixed(2)) : 'No location')) + ' · ' + radiusLabel(p.radius_value); })()}</p>
                             {p.company && <p className="text-base text-teal-200 mt-1">🏢 {p.company}</p>}
+                            {(function(){
+                              var co = (p.company || '').trim();
+                              if (!co) return null;
+                              var link = careersLinks[co.toLowerCase()];
+                              if (!link) return null;
+                              return (
+                                <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-slate-700/60 hover:bg-slate-700 border border-slate-600/40 text-teal-100 text-base">
+                                  {link.logo_url && <img src={link.logo_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '4px' }} loading="lazy" />}
+                                  <span>{link.source === 'directory' ? ('🔗 Apply at ' + link.name) : ('🔍 Search ' + link.name + ' careers')}</span>
+                                </a>
+                              );
+                            })()}
                             <div className="flex items-center gap-1 mt-1"><CheckIcon /><span className="text-xl text-teal-400">Watching for new jobs</span></div>
                           </div>
                           <div className="flex gap-2 ml-2 shrink-0">
@@ -962,7 +1236,17 @@ function App() {
                               setEditingId(p.id);
                               setEditingName(p.name || '');
                               setEditingCompany(p.company || '');
-                              setEditingRadius(p.radius_value || '25');
+                              // Seed all where-mode fields from the current row.
+                              var seedMode = p.where_mode || (p.radius_value === 'remote' ? 'anywhere' : 'address');
+                              setEditingWhereMode(seedMode);
+                              setEditingRadius(p.radius_value && RADIUS_VALUES.indexOf(p.radius_value) !== -1 ? p.radius_value : '25');
+                              setEditingStateCode(p.state_code || '');
+                              setEditingLocationName(p.location_name || '');
+                              setEditingLat(p.lat != null ? p.lat : null);
+                              setEditingLng(p.lng != null ? p.lng : null);
+                              setEditGeoQuery('');
+                              setEditGeoCandidates([]);
+                              setEditGeoMsg('');
                             }} className="p-2 text-teal-400 hover:bg-slate-700/30 rounded-lg"><EditIcon /></button>
                             <button onClick={() => removeSearch(p.id)} className="p-2 text-teal-400 hover:bg-slate-700/30 rounded-lg"><TrashIcon /></button>
                           </div>
@@ -996,7 +1280,7 @@ function App() {
                             <h3 className="font-semibold text-2xl text-white underline decoration-dotted truncate">{p.name}</h3>
                           </button>
                           <span className="text-xl text-gray-200 font-bold">Saved</span>
-                          <p className="text-gray-300 text-lg">{p.radius_value === 'remote' ? 'Remote' : ((p.location_name || (Number(p.lat).toFixed(2) + ', ' + Number(p.lng).toFixed(2))) + ' · ' + radiusLabel(p.radius_value))}</p>
+                          <p className="text-gray-300 text-lg">{(function(){ var wm = p.where_mode || (p.radius_value === 'remote' ? 'anywhere' : 'address'); if (wm === 'anywhere') return '🌎 Anywhere in the US'; if (wm === 'state') return '🗺️ ' + (US_STATE_CODE_TO_NAME[p.state_code] || p.state_code || 'a state'); return (p.location_name || (p.lat != null && p.lng != null ? (Number(p.lat).toFixed(2) + ', ' + Number(p.lng).toFixed(2)) : 'No location')) + ' · ' + radiusLabel(p.radius_value); })()}</p>
                         </div>
                         <button onClick={() => removeSearch(p.id)} className="p-2 text-teal-400 hover:bg-slate-700/30 rounded-lg ml-2 shrink-0"><TrashIcon /></button>
                       </div>
