@@ -52,7 +52,7 @@ const API_BASE = 'https://pivot-backend-cr4l.onrender.com';
 const PV_BG = '/pivot-bg.jpg';
 const PV_LOGIN_BG = '/pivot-bg.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
-const APP_VERSION = '0.1.7';
+const APP_VERSION = '0.1.8';
 
 // Sector dropdown — broad enough to land most postings from federal + private boards.
 // Backend stores the slug; UI shows the label. Sorted alphabetically by label.
@@ -717,7 +717,7 @@ function App() {
   if (page === 'login') {
     return (
       <div style={{ minHeight: '100dvh', width: '100%', backgroundColor: POSTER_STYLE.backgroundColor, backgroundImage: 'url(' + PV_LOGIN_BG + ')', backgroundSize: POSTER_STYLE.backgroundSize, backgroundPosition: POSTER_STYLE.backgroundPosition, backgroundRepeat: POSTER_STYLE.backgroundRepeat, backgroundAttachment: POSTER_STYLE.backgroundAttachment, display: 'flex', flexDirection: 'column', alignItems: 'stretch', paddingBottom: '4rem' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: 'max(1.5rem, env(safe-area-inset-top))', paddingBottom: '0.5rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: 'max(10vh, calc(env(safe-area-inset-top) + 4rem))', paddingBottom: '0.5rem' }}>
           <h1 className="text-teal-300 font-black text-center tracking-tight" style={{ fontSize: isPhone ? '4.5rem' : '5.5rem', textShadow: '0 2px 14px rgba(0,0,0,0.95), 0 0 28px rgba(0,0,0,0.85)', marginTop: '0', lineHeight: '1' }}>Pivot Watch</h1>
           <p className="text-teal-200 font-bold italic text-center" style={{ fontSize: isPhone ? '1.5rem' : '1.8rem', textShadow: '0 2px 10px rgba(0,0,0,0.9), 0 0 16px rgba(0,0,0,0.8)', marginTop: '0.5rem', lineHeight: '1' }}>Find your future</p>
         </div>
