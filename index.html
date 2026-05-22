@@ -53,7 +53,7 @@ const API_BASE = 'https://pivot-backend-cr4l.onrender.com';
 const PV_BG = '/pivot-bg.jpg';
 const PV_LOGIN_BG = '/pivot-bg.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
-const APP_VERSION = '0.1.18';
+const APP_VERSION = '0.1.19';
 
 // Sector dropdown — broad enough to land most postings from federal + private boards.
 // Backend stores the slug; UI shows the label. Sorted alphabetically by label.
@@ -322,7 +322,7 @@ const PageWrapper = ({ children, bgStyle }) => {
   );
 };
 // ============================================================================
-// AuthGate v0.3 — 3Brains portable account + anonymous-storage component
+// AuthGate v0.3.1 — 3Brains portable account + anonymous-storage component
 // ============================================================================
 //
 // PURPOSE
@@ -351,7 +351,7 @@ const PageWrapper = ({ children, bgStyle }) => {
 //         - gate.openSignup() / gate.openSignin() — open the modal manually
 //         - gate.signOut() — clear token + user, list flips to anon
 //   (e) Render once at the root of the App return:
-//         <gate.Modal />
+//         {gate.modal}                  // v0.3.1: JSX, not a component
 //   (f) Render <gate.CounterBanner /> on save-list pages (anon-only display)
 //   (g) Render <gate.EmptyState message="..." /> on auth-gated tabs
 //
@@ -392,7 +392,7 @@ const AUTH_GATE_CONFIG = {
   itemNoun: 'searches',
   upgradeBenefit: 'unlimited saves and 12-hour job-match alerts',
   accentColor: '#0d9488',
-  modalBg: 'rgba(8,18,28,0.95)',
+  modalBg: 'rgba(8,18,28,0.80)',
   modalBackdropImage: PV_LOGIN_BG,
   stayLoggedInDefault: true
 };
@@ -413,7 +413,7 @@ function useAuthGate(config) {
   const [modalError, setModalError] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [backendWaking, setBackendWaking] = useState(false);
-  // v0.3: persistence toggle. true = localStorage (survives browser close).
+  // v0.3.1: persistence toggle. true = localStorage (survives browser close).
   // false = sessionStorage (cleared on browser/tab close).
   const [stayLoggedIn, setStayLoggedIn] = useState(
     config.stayLoggedInDefault !== false
@@ -432,7 +432,7 @@ function useAuthGate(config) {
   };
   const genAnonId = () => 'anon_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
-  // -- v0.3 Storage helpers: route between localStorage (persistent) and
+  // -- v0.3.1 Storage helpers: route between localStorage (persistent) and
   //    sessionStorage (cleared on browser close), based on stayLoggedIn.
   const readToken = () => {
     return localStorage.getItem(config.tokenKey) || sessionStorage.getItem(config.tokenKey);
@@ -466,7 +466,7 @@ function useAuthGate(config) {
     return await r.json();
   };
   const serverAdd = async (item) => {
-    // v0.3: pass item shape through unchanged. Host app controls payload.
+    // v0.3.1: pass item shape through unchanged. Host app controls payload.
     const t = readToken();
     const r = await fetch(config.apiBase + config.watchlistEndpoint, {
       method: 'POST',
@@ -500,7 +500,7 @@ function useAuthGate(config) {
     }
   };
 
-  // -- Mount: hydrate token + user from either storage (v0.3)
+  // -- Mount: hydrate token + user from either storage (v0.3.1)
   useEffect(() => {
     const t = readToken();
     const u = readUserRaw();
@@ -704,10 +704,10 @@ function useAuthGate(config) {
   };
 
   // -- Modal component
-  const Modal = () => {
-    if (!modalOpen) return null;
-    const isSignup = modalMode === 'signup';
-    return (
+  // v0.3.1: Return modal as JSX (use as {gate.modal}). Defining as a closure-based
+  // component caused remount-on-every-render, dropping keyboard focus on each keystroke.
+  const isSignup = modalMode === 'signup';
+  const modal = !modalOpen ? null : (
       <>
         <div onClick={closeModal} style={Object.assign(
           {
@@ -718,8 +718,7 @@ function useAuthGate(config) {
             backgroundImage: 'url(' + config.modalBackdropImage + ')',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            backgroundColor: 'rgba(0,0,0,0.55)',
-            backgroundBlendMode: 'darken'
+            backgroundColor: 'rgba(0,0,0,0.35)'
           } : {}
         )} />
         <div style={{
@@ -733,7 +732,7 @@ function useAuthGate(config) {
           backdropFilter: 'blur(8px)',
           boxShadow: '0 10px 40px rgba(0,0,0,0.6)'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
             <h2 style={{ color: '#fff', fontSize: '1.75rem', fontWeight: 700, margin: 0, lineHeight: 1.1 }}>
               {isSignup ? 'Sign up' : 'Sign in'}
             </h2>
@@ -742,6 +741,12 @@ function useAuthGate(config) {
               fontSize: '1.75rem', fontWeight: 700, cursor: 'pointer', lineHeight: 1, padding: '0 0.25rem'
             }}>X</button>
           </div>
+          {/* v0.3.1: Always-shown value-prop subhead. Tells the user *why*. */}
+          {isSignup && (
+            <p style={{ color: 'rgba(255,255,255,0.80)', fontSize: '1rem', lineHeight: 1.4, marginBottom: '0.75rem' }}>
+              Sign up for {config.upgradeBenefit}.
+            </p>
+          )}
           {modalMessage && (
             <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '1.125rem', lineHeight: 1.4, marginBottom: '1rem' }}>
               {modalMessage}
@@ -785,7 +790,7 @@ function useAuthGate(config) {
               {modalError}
             </p>
           )}
-          {/* v0.3: Stay-signed-in toggle. Default ON. Off = sessionStorage = sign-out on browser close. */}
+          {/* v0.3.1: Stay-signed-in toggle. Default ON. Off = sessionStorage = sign-out on browser close. */}
           <label style={{
             display: 'flex', alignItems: 'center', gap: '0.5rem',
             color: 'rgba(255,255,255,0.85)', fontSize: '1rem',
@@ -819,7 +824,6 @@ function useAuthGate(config) {
         </div>
       </>
     );
-  };
 
   // -- Empty-state for auth-gated tabs (e.g. Alerts when anon)
   const EmptyState = ({ message, ctaLabel }) => (
@@ -881,13 +885,13 @@ function useAuthGate(config) {
     openSignup: openSignup,
     openSignin: openSignin,
     signOut: signOut,
-    Modal: Modal,
+    modal: modal,                            // v0.3.1: JSX (host renders {gate.modal}). Stable, preserves focus.
     EmptyState: EmptyState,
     CounterBanner: CounterBanner
   };
 }
 
-// === END AuthGate v0.3 ======================================================
+// === END AuthGate v0.3.1 ======================================================
 
 
 function App() {
@@ -1434,7 +1438,7 @@ function App() {
 
   return (
     <PageWrapper bgStyle={page === 'watchlist' || page === 'searches' || page === 'alerts' ? WOOD_STYLE : POSTER_STYLE}>
-      <gate.Modal />
+      {gate.modal}
       <JobsDrawer />
       {mapEnlarged && drawerData && drawerData.static_map_url && (
         <div onClick={() => setMapEnlarged(false)} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
