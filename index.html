@@ -53,7 +53,7 @@ const API_BASE = 'https://pivot-backend-cr4l.onrender.com';
 const PV_BG = '/pivot-bg.jpg';
 const PV_LOGIN_BG = '/pivot-bg.jpg';
 const BILL_PHOTO = 'https://raw.githubusercontent.com/bspencer413/memorial-watch/main/Bill.jpeg';
-const APP_VERSION = '0.1.20';
+const APP_VERSION = '0.1.21';
 
 // Sector dropdown — broad enough to land most postings from federal + private boards.
 // Backend stores the slug; UI shows the label. Sorted alphabetically by label.
@@ -1113,6 +1113,10 @@ function App() {
 
   const addSearch = async () => {
     setAddSearchMsg('');
+    // Gate-first: saving a search (and the jobs/prospects it unlocks) is a
+    // signed-in feature. Anon users can browse and preview locations, but Save
+    // prompts sign-up rather than saving locally.
+    if (!gate.isAuthed) { gate.openSignup('Sign up free to save this search and see jobs near you.'); return; }
     var name = (newSearch.name || '').trim();
     var company = (newSearch.company || '').trim() || null;
     var sector  = newSearch.sector || null;
@@ -1264,6 +1268,7 @@ function App() {
   const setSearchInMySearches = async (id, saved) => {
     // v0.1.6: toggles the in_my_searches flag. Never removes the place from
     // Watchlist — Watchlist contains ALL searches and is the live monitor.
+    if (!gate.isAuthed) { gate.openSignup('Sign up free to save prospects.'); return; }
     var token = gate.getToken();
     try {
       var r = await fetch(API_BASE + '/pv/searches/' + id, {
